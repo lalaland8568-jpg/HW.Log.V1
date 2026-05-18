@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>H.W. Log — Workout Tracker</title>
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#0d0d0f">
@@ -28,6 +28,8 @@
     --radius-sm: 8px;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body { overscroll-behavior-x: none; }
 
   body {
     font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -131,6 +133,16 @@
   .num-btn.zero { grid-column: 2; }
   .pin-error { color: var(--danger); font-size: 0.85rem; text-align: center; margin-top: 1rem; min-height: 1.2em; }
   body, button, input { touch-action: manipulation; }
+
+  /* prevent horizontal pan on iPhone */
+  @media (pointer: coarse) {
+    body { touch-action: pan-y; }
+  }
+
+  /* On small screens constrain width to approximate iPhone sizes */
+  @media (max-width: 680px) {
+    body { max-width: 430px; margin: 0 auto; }
+  }
   @media (max-width: 680px) {
     .num-btn { padding: 1.1rem; font-size: 1.4rem; }
     .exercise-btn { padding: 1.2rem; }
@@ -642,6 +654,7 @@
 <body>
 
 <!-- ══ PIN SCREEN ══ -->
+<div id="status-indicator" style="position:fixed; top:12px; left:50%; transform:translateX(-50%); z-index:9999; display:none; font-size:1.8rem;"></div>
 <div id="pin-screen">
   <div class="logo">H.W. Log</div>
   <div class="logo-sub">Workout Tracker</div>
@@ -678,6 +691,48 @@
   </div>
 </div>
 
+  <!-- Welcome / Walkthrough Modal -->
+  <div class="modal-overlay" id="modal-welcome">
+    <div class="modal">
+      <div class="modal-title">Welcome to H.W. Log</div>
+      <div id="welcome-content">
+        <p>Track exercises, log sets, and time your rests. Use the Builder to assign exercises to days, Library to manage movements, and History to review logged sets.</p>
+        <ul style="margin-top:8px;">
+          <li>Log sets and start rest timer automatically.</li>
+          <li>Rename exercises in Library or Builder.</li>
+          <li>Edit your sets from the Profile (tap your name).</li>
+        </ul>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" onclick="closeModal('modal-welcome')">Skip</button>
+        <button class="btn btn-primary" onclick="startWelcomeTour()">Take Tour</button>
+      </div>
+    </div>
+  </div>
+
+<!-- Profile / Account Modal -->
+<div class="modal-overlay" id="modal-profile">
+  <div class="modal" id="profile-modal-inner">
+    <div class="modal-title">Profile — Edit & Review</div>
+    <div class="form-group">
+      <label class="label">Name</label>
+      <input class="input" id="profile-name">
+    </div>
+    <div class="form-group">
+      <label class="label">Change PIN (4 digits)</label>
+      <input class="input mono" id="profile-pin" placeholder="Leave blank to keep current">
+    </div>
+    <div class="form-group">
+      <label class="label">Your Logged Sets</label>
+      <div id="profile-logs" style="max-height:260px; overflow:auto; margin-top:8px;"></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal('modal-profile')">Close</button>
+      <button class="btn btn-primary" onclick="saveProfileEdits()">Save Changes</button>
+    </div>
+  </div>
+</div>
+
 <!-- ══ MAIN APP ══ -->
 <div id="app">
   <header class="app-header">
@@ -685,7 +740,7 @@
       <div class="app-logo">H.W. Log</div>
     </div>
     <div class="user-badge">
-      <span class="name" id="header-username"></span>
+      <span class="name" id="header-username" onclick="openProfile()" style="cursor:pointer"></span>
       <button class="lock-btn" onclick="lockApp()">🔒 Lock</button>
     </div>
   </header>
@@ -699,7 +754,12 @@
 
   <!-- TAB 1: DASHBOARD -->
   <div class="tab-content active" id="tab-dashboard">
-    <div class="section-title">Today's Workout</div>
+    <div class="flex justify-between items-end" style="gap:12px; margin-bottom:12px;">
+      <div>
+        <div class="section-title">Today's Workout</div>
+        <div id="dashboard-program-label" style="font-size:0.95rem; color:var(--text3); margin-top:6px;"></div>
+      </div>
+    </div>
 
     <div class="day-selector" id="day-selector"></div>
 
@@ -715,6 +775,19 @@
     <div class="flex justify-between items-center mb-4">
       <div class="section-title" style="margin-bottom:0">Workout Builder</div>
       <button class="btn btn-primary btn-sm" onclick="showAddDayModal()">+ Add Day</button>
+    </div>
+    <div class="flex justify-between items-center mb-3">
+      <div class="flex gap-2" style="flex-wrap:wrap; align-items:center;">
+        <select class="input" id="builder-program-select" onchange="changeBuilderProgram(this.value)" style="min-width:220px;"></select>
+        <button class="btn btn-secondary btn-sm" onclick="showCreateProgramModal()">+ Program</button>
+        <button class="btn btn-secondary btn-sm" onclick="renameProgram()">Rename</button>
+      </div>
+      <div class="flex gap-2" style="flex-wrap:wrap; align-items:center;">
+        <button class="btn btn-secondary btn-sm" onclick="exportProgram()">Export</button>
+        <label class="btn btn-secondary btn-sm" style="cursor:pointer; margin:0;">
+          Import<input id="import-program-file" type="file" accept="application/json" onchange="handleProgramImport(event)" style="display:none">
+        </label>
+      </div>
     </div>
     <div class="builder-layout">
       <div>
@@ -812,6 +885,21 @@
     <div class="modal-actions">
       <button class="btn btn-secondary" onclick="closeModal('modal-add-day')">Cancel</button>
       <button class="btn btn-primary" onclick="saveDay()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Add Program -->
+<div class="modal-overlay" id="modal-add-program">
+  <div class="modal">
+    <div class="modal-title" id="modal-add-program-title">Add Program</div>
+    <div class="form-group">
+      <label class="label">Program Name</label>
+      <input class="input" id="new-program-name" placeholder="e.g. 4-Day Split, Full Body">
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal('modal-add-program')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveProgram()">Save</button>
     </div>
   </div>
 </div>
@@ -1035,7 +1123,6 @@ function getProgramExercises() {
 function seedDefaultData(d) {
   if (!d.users) d.users = {};
   if (!d.exercises) d.exercises = {};
-  if (!d.workoutDays) d.workoutDays = {};
   if (!d.logs) d.logs = {};
 
   const addExercise = ex => {
@@ -1049,82 +1136,81 @@ function seedDefaultData(d) {
   getProgramExercises().forEach(addExercise);
 
   if (!Object.values(d.users).some(u => u.name === 'Nathan')) {
-    d.users['user_nathan'] = { name: 'Nathan', pinHash: hashPin('0000') };
+    d.users['user_nathan'] = { name: 'Nathan', pinHash: hashPin('0000'), workoutDays: {} };
   }
 
-  const findExerciseId = name => Object.keys(d.exercises).find(id => d.exercises[id].name.toLowerCase() === name.toLowerCase());
-  const planDays = [
-    {
-      id: 'day_full_body',
-      name: 'Full-Body / Cardio / Core',
-      exercises: [
-        'Hax Squat Machine',
-        'Shoulder Press Hammer Machine',
-        'Horizontal Row Machine (Neutral)',
-        'Cable Shoulder Lateral Raise',
-        'Bicep Curls',
-        'Weighted Crunch Machine',
-        'Pallof roll w push'
-      ]
-    },
-    {
-      id: 'day_push',
-      name: 'Push Day',
-      exercises: [
-        'Chest Press DB',
-        'Shoulder Press DB',
-        'Incline Bench',
-        'Forward lean dips',
-        'Chest Fly Machine',
-        'Shoulder lateral raise',
-        'Rear Delt Cable Fly',
-        'Tricep Extension squat bb'
-      ]
-    },
-    {
-      id: 'day_lower_body',
-      name: 'Lower-Body',
-      exercises: [
-        'Hax Squat Machine (Inline & Close)',
-        'Hamstring Curl Machine',
-        'Leg Extension Machine',
-        'Leg Press (Feet High & Wide)',
-        'Seated Calf Raises',
-        'Weighted Crunch Machine hammer',
-        'Pallof roll w push'
-      ]
-    },
-    {
-      id: 'day_pull',
-      name: 'Pull Day',
-      exercises: [
-        'Horizontal Row Machine (Wide Grip)',
-        'Lat Pull Down\'s (Close Grip)',
-        'Assisted Pull-Ups',
-        'Rear Delt Cable Fly',
-        'Cable Face Pulls',
-        'Hammer Curl',
-        'Bicep Curls'
-      ]
-    }
-  ];
-
-  planDays.forEach(day => {
-    if (!d.workoutDays[day.id]) {
-      d.workoutDays[day.id] = {
-        name: day.name,
-        exercises: day.exercises.map(findExerciseId).filter(Boolean)
-      };
-    }
-  });
+  // no shared workout day templates are seeded; every user starts blank
 }
 
 function ensureSeededData() {
   const d = getData();
-  const shouldSeed = !Object.keys(d.exercises).length || !Object.keys(d.workoutDays).length || !Object.values(d.users).some(u => u.name === 'Nathan');
+  const shouldSeed = !Object.keys(d.exercises).length || !Object.values(d.users).some(u => u.name === 'Nathan');
   if (shouldSeed) {
     seedDefaultData(d);
     setData(d);
+  }
+}
+
+function ensureUserPrograms(data) {
+  if (!currentUserId || !data.users || !data.users[currentUserId]) return;
+  const user = data.users[currentUserId];
+  if (!user.programs) user.programs = {};
+  if (!user.activeProgramId || !user.programs[user.activeProgramId]) {
+    const programIds = Object.keys(user.programs);
+    if (programIds.length > 0) {
+      user.activeProgramId = programIds[0];
+    } else {
+      const id = 'program_' + Date.now();
+      const migratedDays = user.workoutDays && Object.keys(user.workoutDays).length ? user.workoutDays : {};
+      if (user.workoutDays) delete user.workoutDays;
+      user.programs[id] = { name: 'My Program', days: migratedDays };
+      user.activeProgramId = id;
+    }
+    setData(data);
+  }
+}
+
+function getUserPrograms(data) {
+  if (!currentUserId || !data.users || !data.users[currentUserId]) return {};
+  const user = data.users[currentUserId];
+  if (!user.programs) user.programs = {};
+  return user.programs;
+}
+
+function getCurrentProgram(data) {
+  if (!currentUserId || !data.users || !data.users[currentUserId]) return null;
+  ensureUserPrograms(data);
+  const user = data.users[currentUserId];
+  return user.programs[user.activeProgramId] || null;
+}
+
+function getUserDays(data) {
+  const program = getCurrentProgram(data);
+  if (program && program.days) return program.days;
+  return {};
+}
+
+function getUserDayIds(data) {
+  return Object.keys(getUserDays(data));
+}
+
+function getUserDay(data, id) {
+  return getUserDays(data)[id];
+}
+
+function setUserDays(data, days) {
+  if (!currentUserId || !data.users[currentUserId]) return;
+  const program = getCurrentProgram(data);
+  if (program) {
+    program.days = days;
+  }
+}
+
+function setCurrentProgram(data, programId) {
+  if (!currentUserId || !data.users || !data.users[currentUserId]) return;
+  const user = data.users[currentUserId];
+  if (user.programs && user.programs[programId]) {
+    user.activeProgramId = programId;
   }
 }
 
@@ -1158,6 +1244,7 @@ let selectedExId = null;
 let timerInterval = null;
 let timerTotal = 0;
 let timerLeft = 0;
+let timerEnd = null;
 
 checkStorage();
 initData();
@@ -1328,11 +1415,21 @@ function loginUser(id) {
   document.getElementById('header-username').textContent = currentUser.name;
   document.getElementById('pin-screen').style.display = 'none';
   document.getElementById('app').classList.add('active');
+  // Clear global UI state for clean user switch
+  selectedDayId = null;
+  activeDayId = null;
+  editingDayId = null;
   switchTab('dashboard');
   renderDashboard();
-  renderBuilder();
-  renderLibrary();
+  // Only render builder and library for non-new users
+  if (!currentUser.isNew) {
+    renderBuilder();
+    renderLibrary();
+  }
   renderHistory();
+  // resume any persisted timer for this user
+  resumePersistedTimerIfAny();
+  showWelcomeIfNeeded();
 }
 
 function lockApp() {
@@ -1366,7 +1463,18 @@ function createUser() {
     errEl.textContent = 'That PIN is already in use.'; return;
   }
   const id = 'user_' + Date.now();
-  data.users[id] = { name, pinHash: hashed };
+  const programId = 'program_' + Date.now();
+  data.users[id] = {
+    name,
+    pinHash: hashed,
+    isNew: true,
+    seenWelcome: false,
+    logs: [],
+    programs: {
+      [programId]: { name: 'My Program', days: {} }
+    },
+    activeProgramId: programId
+  };
   setData(data);
   closeModal('modal-create-user');
   renderPinScreen();
@@ -1387,13 +1495,42 @@ function switchTab(tab) {
   if (tab === 'history') { populateHistoryFilter(); renderHistory(); }
 }
 
+function clearNewUserFlag() {
+  const data = getData();
+  if (currentUserId && data.users && data.users[currentUserId]) {
+    data.users[currentUserId].isNew = false;
+    setData(data);
+  }
+}
+
 // ═══════════════════════════════════════════════
 //  TAB 1: DASHBOARD
 // ═══════════════════════════════════════════════
 
 function renderDashboard() {
   const data = getData();
-  const days = data.workoutDays;
+  const user = currentUserId ? (data.users[currentUserId] || {}) : null;
+  const programLabel = document.getElementById('dashboard-program-label');
+  const program = getCurrentProgram(data);
+  if (programLabel) {
+    programLabel.textContent = program ? `Program: ${program.name}` : '';
+  }
+  
+  // For new users, show welcome prompt instead of any data
+  if (user && user.isNew) {
+    selectedDayId = null;
+    const selector = document.getElementById('day-selector');
+    selector.innerHTML = `
+      <div class="empty" style="grid-column:1/-1; padding:1.5rem; text-align:center;">
+        <div style="font-weight:700; margin-bottom:10px;">Welcome, ${user.name}!</div>
+        <div style="color:var(--text3); margin-bottom:16px;">It looks like you're new here. Create your own workout schedule in Builder to get started.</div>
+        <button class="btn btn-primary" onclick="switchTab('builder')">Go to Builder</button>
+      </div>`;
+    document.getElementById('exercise-grid').innerHTML = '';
+    return;
+  }
+
+  const days = getUserDays(data);
   const selector = document.getElementById('day-selector');
   const dayIds = Object.keys(days);
 
@@ -1421,7 +1558,7 @@ function selectDay(id) {
 
 function renderExerciseGrid() {
   const data = getData();
-  const day = data.workoutDays[selectedDayId];
+  const day = getUserDay(data, selectedDayId);
   const grid = document.getElementById('exercise-grid');
   if (!day || !day.exercises || day.exercises.length === 0) {
     grid.innerHTML = '<div class="empty" style="grid-column:1/-1"><div class="icon">🏋️</div><p>No exercises assigned to this day.<br>Go to Builder to add some.</p></div>';
@@ -1456,6 +1593,7 @@ function openExPanel(exId) {
   const data = getData();
   const ex = data.exercises[exId];
   const recent = getLastNLogs(exId, 3);
+  const totalCount = (data.logs[currentUserId] || []).filter(l => l.exId === exId).length;
   const avgWeight = recent.length ? (recent.reduce((a, l) => a + parseFloat(l.weight || 0), 0) / recent.length).toFixed(1) : '—';
   const avgReps = recent.length ? (recent.reduce((a, l) => a + parseInt(l.reps || 0), 0) / recent.length).toFixed(1) : '—';
 
@@ -1464,7 +1602,7 @@ function openExPanel(exId) {
       <span class="date">${new Date(l.date).toLocaleDateString()}</span>
       <span class="wt">${l.weight} lbs</span>
       <span class="reps">${l.reps} reps</span>
-      <span class="note">${l.notes || ''}</span>
+      ${l.notes ? `<span class="note">Notes: ${l.notes}</span>` : ''}
     </div>
   `).join('') : '<div class="text-muted text-sm">No history yet.</div>';
 
@@ -1487,7 +1625,7 @@ function openExPanel(exId) {
       <div class="avg-bar mb-3">
         <div class="avg-item"><div class="val">${avgWeight}</div><div class="lbl">Avg lbs</div></div>
         <div class="avg-item"><div class="val">${avgReps}</div><div class="lbl">Avg reps</div></div>
-        <div class="avg-item"><div class="val">${recent.length}</div><div class="lbl">Logged sets</div></div>
+        <div class="avg-item"><div class="val">${totalCount}</div><div class="lbl">Logged sets</div></div>
       </div>
       ` : ''}
 
@@ -1497,8 +1635,8 @@ function openExPanel(exId) {
       <div class="log-form">
         <div class="form-group">
           <label class="label">Weight (lbs)</label>
-          <input class="input mono" id="log-weight" type="text" inputmode="numeric" pattern="[0-9=+\-*/().]*" placeholder="135 or =45+45+25+20" oninput="calcWeight()">
-          <div class="calc-hint">Tip: start with = to calculate (=45+45+25)</div>
+          <input class="input mono" id="log-weight" type="text" inputmode="text" pattern="[0-9=+\-*/().]*" placeholder="135 or =45+45+25+20" oninput="calcWeight()">
+          <div class="calc-hint">Tip: start with = to calculate (=45+45+25). Full keyboard enabled.</div>
           <div class="calc-result" id="calc-result"></div>
         </div>
         <div class="form-group">
@@ -1632,24 +1770,66 @@ function ytEmbed(url) {
 //  REST TIMER
 // ═══════════════════════════════════════════════
 
+function requestNotificationPermission() {
+  if (!('Notification' in window)) return Promise.resolve('unsupported');
+  return Notification.requestPermission();
+}
+
+function tryShowNotification(title, opts = {}) {
+  if (!('serviceWorker' in navigator)) return;
+  navigator.serviceWorker.getRegistration().then(reg => {
+    if (reg && reg.showNotification) {
+      try { reg.showNotification(title, opts); } catch (e) { /* best-effort */ }
+    }
+  }).catch(()=>{});
+}
+
+function persistTimerState(uid, endTs, totalSec) {
+  try {
+    const s = getData();
+    s._timerState = s._timerState || {};
+    s._timerState[uid] = { end: endTs, total: totalSec };
+    setData(s);
+  } catch (e) {}
+}
+
+function clearPersistedTimer(uid) {
+  try {
+    const s = getData();
+    if (s._timerState) { delete s._timerState[uid]; setData(s); }
+  } catch (e) {}
+}
+
 function startTimer(seconds) {
   stopTimer();
   timerTotal = seconds;
-  timerLeft = seconds;
+  const now = Date.now();
+  timerEnd = now + seconds * 1000;
+  persistTimerState(currentUserId, timerEnd, seconds);
+
   const overlay = document.getElementById('timer-overlay');
   overlay.classList.add('active');
-  updateTimerDisplay();
   const circumference = 2 * Math.PI * 106;
   document.getElementById('timer-progress').style.strokeDasharray = circumference;
 
+  // show an initial notification (best-effort)
+  requestNotificationPermission().then(perm => {
+    if (perm === 'granted') {
+      tryShowNotification('Rest timer started', { body: `Rest for ${Math.round(seconds/60*10)/10} minutes`, tag: 'hwlog-rest', renotify: true });
+    }
+  });
+
   timerInterval = setInterval(() => {
-    timerLeft--;
+    const now = Date.now();
+    timerLeft = Math.max(0, Math.round((timerEnd - now) / 1000));
     updateTimerDisplay();
     if (timerLeft <= 0) {
       stopTimer();
       overlay.classList.remove('active');
+      tryShowNotification('Rest complete', { body: `Your rest period is over.`, tag: 'hwlog-rest-finish' });
     }
-  }, 1000);
+  }, 500);
+  updateTimerDisplay();
 }
 
 function updateTimerDisplay() {
@@ -1657,21 +1837,50 @@ function updateTimerDisplay() {
   const s = timerLeft % 60;
   document.getElementById('timer-num').textContent = `${m}:${s.toString().padStart(2,'0')}`;
   const circumference = 2 * Math.PI * 106;
-  const offset = circumference * (1 - timerLeft / timerTotal);
+  const offset = timerTotal ? (circumference * (1 - Math.max(0, timerLeft) / timerTotal)) : 0;
   document.getElementById('timer-progress').style.strokeDashoffset = offset;
 }
 
 function stopTimer() {
   if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+  timerLeft = 0; timerTotal = 0; timerEnd = null;
   document.getElementById('timer-overlay').classList.remove('active');
+  if (currentUserId) clearPersistedTimer(currentUserId);
 }
 
 function skipTimer() { stopTimer(); }
 
 function addTime() {
-  timerLeft += 30;
+  if (!timerEnd) return;
+  timerEnd += 30000; // +30s
+  const now = Date.now();
+  timerLeft = Math.max(0, Math.round((timerEnd - now) / 1000));
   timerTotal = Math.max(timerTotal, timerLeft);
+  persistTimerState(currentUserId, timerEnd, timerTotal);
   updateTimerDisplay();
+}
+
+function resumePersistedTimerIfAny() {
+  try {
+    const s = getData();
+    const ts = s._timerState && currentUserId ? s._timerState[currentUserId] : null;
+    if (ts && ts.end && Date.now() < ts.end) {
+      timerTotal = ts.total || Math.round((ts.end - Date.now())/1000);
+      timerEnd = ts.end;
+      const overlay = document.getElementById('timer-overlay');
+      overlay.classList.add('active');
+      timerInterval = setInterval(() => {
+        const now = Date.now();
+        timerLeft = Math.max(0, Math.round((timerEnd - now) / 1000));
+        updateTimerDisplay();
+        if (timerLeft <= 0) { stopTimer(); overlay.classList.remove('active'); }
+      }, 500);
+      updateTimerDisplay();
+    } else if (ts && ts.end) {
+      // expired, clear
+      if (currentUserId) clearPersistedTimer(currentUserId);
+    }
+  } catch (e) {}
 }
 
 // ═══════════════════════════════════════════════
@@ -1681,9 +1890,19 @@ function addTime() {
 let activeDayId = null;
 
 function renderBuilder() {
+  // Prevent new users from accessing builder before completing welcome
+  if (currentUser && currentUser.isNew) {
+    const list = document.getElementById('builder-day-list');
+    const detail = document.getElementById('builder-day-detail');
+    if (list) list.innerHTML = '<div class="empty"><div class="icon">📅</div><p>Please take the welcome tour first.</p></div>';
+    if (detail) detail.innerHTML = '<div class="empty"><div class="icon">📅</div><p>Start in the Dashboard to begin.</p></div>';
+    return;
+  }
   ensureSeededData();
   const data = getData();
-  const days = data.workoutDays || {};
+  ensureUserPrograms(data);
+  renderBuilderProgramControls(data);
+  const days = getUserDays(data) || {};
   const dayIds = Object.keys(days);
   const list = document.getElementById('builder-day-list');
   const detail = document.getElementById('builder-day-detail');
@@ -1720,6 +1939,111 @@ function renderBuilder() {
   }
 }
 
+function renderBuilderProgramControls(data) {
+  const programSelect = document.getElementById('builder-program-select');
+  if (!programSelect) return;
+  const programs = getUserPrograms(data);
+  const currentProgramId = data.users[currentUserId] && data.users[currentUserId].activeProgramId;
+  programSelect.innerHTML = Object.keys(programs).map(id =>
+    `<option value="${id}"${id === currentProgramId ? ' selected' : ''}>${programs[id].name}</option>`
+  ).join('');
+}
+
+function changeBuilderProgram(programId) {
+  const data = getData();
+  setCurrentProgram(data, programId);
+  setData(data);
+  activeDayId = null;
+  renderBuilder();
+  renderDashboard();
+}
+
+let editingProgramId = null;
+function showCreateProgramModal(id = null) {
+  const data = getData();
+  editingProgramId = id;
+  const title = document.getElementById('modal-add-program-title');
+  const input = document.getElementById('new-program-name');
+  title.textContent = id ? 'Rename Program' : 'Add Program';
+  input.value = id && data.users[currentUserId] && data.users[currentUserId].programs && data.users[currentUserId].programs[id]
+    ? data.users[currentUserId].programs[id].name : '';
+  openModal('modal-add-program');
+}
+
+function renameProgram() {
+  const data = getData();
+  const user = data.users[currentUserId];
+  if (!user || !user.activeProgramId) return;
+  showCreateProgramModal(user.activeProgramId);
+}
+
+function saveProgram() {
+  const name = document.getElementById('new-program-name').value.trim();
+  if (!name) return alert('Please enter a program name.');
+  const data = getData();
+  const user = data.users[currentUserId];
+  if (!user) return;
+  if (editingProgramId && user.programs[editingProgramId]) {
+    user.programs[editingProgramId].name = name;
+  } else {
+    const id = 'program_' + Date.now();
+    user.programs[id] = { name, days: {} };
+    user.activeProgramId = id;
+    activeDayId = null;
+  }
+  setData(data);
+  closeModal('modal-add-program');
+  renderBuilder();
+}
+
+function exportProgram() {
+  const data = getData();
+  const program = getCurrentProgram(data);
+  if (!program) return alert('No program to export.');
+  const payload = { name: program.name, days: program.days };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${program.name.replace(/[^a-z0-9]+/gi, '_').replace(/^_+|_+$/g, '') || 'program'}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function handleProgramImport(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function () {
+    try {
+      const imported = JSON.parse(reader.result);
+      if (!imported || typeof imported !== 'object') throw new Error('Invalid import file');
+      const name = imported.name || prompt('Program name?', 'Imported Program');
+      if (!name) throw new Error('Program name required');
+      const days = imported.days || imported.workoutDays || {};
+      if (typeof days !== 'object') throw new Error('Invalid days structure');
+      const data = getData();
+      ensureUserPrograms(data);
+      const user = data.users[currentUserId];
+      const id = 'program_' + Date.now();
+      user.programs[id] = { name, days };
+      user.activeProgramId = id;
+      setData(data);
+      activeDayId = null;
+      renderBuilder();
+      renderDashboard();
+      alert('Program imported successfully.');
+    } catch (err) {
+      alert('Import failed: ' + err.message);
+    } finally {
+      event.target.value = '';
+    }
+  };
+  reader.readAsText(file);
+}
+
 function selectBuilderDay(id) {
   activeDayId = id;
   renderBuilder();
@@ -1727,58 +2051,96 @@ function selectBuilderDay(id) {
 
 function renderBuilderDetail() {
   const data = getData();
-  const day = data.workoutDays[activeDayId];
-  const assigned = day.exercises || [];
+  const day = getUserDay(data, activeDayId);
+  const assigned = (day && day.exercises) ? day.exercises : [];
   const available = Object.keys(data.exercises).filter(id => !assigned.includes(id));
 
-  const assignedHtml = assigned.length ? assigned.map(exId => {
+  const assignedHtml = assigned.length ? assigned.map((exId, idx) => {
     const ex = data.exercises[exId];
     if (!ex) return '';
     return `<div class="assign-item">
       <div>
-        <div class="assign-item-name">${ex.name}</div>
+        <div class="assign-item-name">${idx+1}. ${ex.name}</div>
         <div class="assign-item-muscle">${ex.muscle || ''}${ex.equipment ? ' · ' + ex.equipment : ''}</div>
       </div>
-      <button class="btn btn-danger btn-sm" onclick="removeExFromDay('${exId}')">Remove</button>
+      <div style="display:flex; gap:6px;">
+        <button class="btn btn-secondary btn-sm" onclick="editExercise('${exId}')">Edit</button>
+        <button class="btn btn-danger btn-sm" onclick="removeExFromDay('${exId}')">Remove</button>
+      </div>
     </div>`;
   }).join('') : '<div class="text-muted text-sm mb-3">No exercises assigned yet.</div>';
-
-  const selectOptions = available.map(id =>
-    `<option value="${id}">${data.exercises[id].name}</option>`
-  ).join('');
 
   document.getElementById('builder-day-detail').innerHTML = `
     <div class="label mb-2">Exercises in <strong>${day.name}</strong></div>
     <div class="exercise-assign-list mb-4">${assignedHtml}</div>
     ${available.length ? `
-    <div class="flex gap-2 items-center">
-      <select class="input add-exercise-select" id="builder-ex-select">
-        <option value="">Select exercise to add...</option>
-        ${selectOptions}
-      </select>
-      <button class="btn btn-primary btn-sm" onclick="addExToDay()" style="white-space:nowrap">+ Add</button>
+    <div style="position:relative;">
+      <input class="input" id="builder-ex-search" placeholder="Search & select exercise..." oninput="filterBuilderSelect()" style="width:100%; padding-right:40px;">
+      <div id="builder-ex-dropdown" style="position:absolute; top:100%; left:0; right:0; max-height:300px; overflow-y:auto; background:var(--bg2); border:1px solid var(--border); border-top:none; border-radius:0 0 8px 8px; display:none; z-index:10;"></div>
     </div>
     ` : '<div class="text-muted text-sm">All exercises are already assigned.</div>'}
   `;
 }
 
-function addExToDay() {
-  const sel = document.getElementById('builder-ex-select');
-  const exId = sel.value;
+function addExToDay(exId) {
   if (!exId) return;
   const data = getData();
-  if (!data.workoutDays[activeDayId].exercises) data.workoutDays[activeDayId].exercises = [];
-  if (!data.workoutDays[activeDayId].exercises.includes(exId)) {
-    data.workoutDays[activeDayId].exercises.push(exId);
+  const days = getUserDays(data);
+  if (!days[activeDayId].exercises) days[activeDayId].exercises = [];
+  const assigned = days[activeDayId].exercises;
+  const last = assigned.length ? assigned[assigned.length - 1] : null;
+  if (last === exId) {
+    if (!confirm('This exercise is the same as the last one in the sequence. Add anyway?')) return;
+  }
+  if (!assigned.includes(exId)) {
+    assigned.push(exId);
     setData(data);
     renderBuilder();
     renderDashboard();
   }
 }
 
+function filterBuilderSelect() {
+  const q = (document.getElementById('builder-ex-search').value || '').toLowerCase();
+  const dropdown = document.getElementById('builder-ex-dropdown');
+  const data = getData();
+  const day = getUserDay(data, activeDayId);
+  const assigned = (day && day.exercises) ? day.exercises : [];
+  const available = Object.keys(data.exercises).filter(id => !assigned.includes(id));
+  
+  if (!q) {
+    dropdown.style.display = 'none';
+    return;
+  }
+  
+  const filtered = available.filter(id => {
+    const ex = data.exercises[id];
+    return ex && ex.name.toLowerCase().includes(q);
+  });
+  
+  if (filtered.length === 0) {
+    dropdown.innerHTML = '<div style="padding:12px; color:var(--text3); text-align:center;">No exercises found</div>';
+    dropdown.style.display = 'block';
+    return;
+  }
+  
+  dropdown.innerHTML = filtered.map(id => {
+    const ex = data.exercises[id];
+    return `<div style="padding:10px 12px; border-bottom:1px solid var(--border); cursor:pointer; display:flex; justify-content:space-between; align-items:center;" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background='transparent'" onclick="addExToDay('${id}')">
+      <div>
+        <div style="font-weight:500;">${ex.name}</div>
+        <div style="font-size:0.85rem; color:var(--text3);">${ex.muscle || ''}</div>
+      </div>
+      <button class="btn btn-primary btn-sm" style="white-space:nowrap;">+ Add</button>
+    </div>`;
+  }).join('');
+  dropdown.style.display = 'block';
+}
+
 function removeExFromDay(exId) {
   const data = getData();
-  data.workoutDays[activeDayId].exercises = data.workoutDays[activeDayId].exercises.filter(id => id !== exId);
+  const days = getUserDays(data);
+  days[activeDayId].exercises = days[activeDayId].exercises.filter(id => id !== exId);
   setData(data);
   renderBuilder();
   renderDashboard();
@@ -1787,8 +2149,9 @@ function removeExFromDay(exId) {
 function showAddDayModal(id = null) {
   editingDayId = id;
   const data = getData();
+  const days = getUserDays(data);
   document.getElementById('modal-add-day-title').textContent = id ? 'Rename Day' : 'Add Workout Day';
-  document.getElementById('new-day-name').value = id ? data.workoutDays[id].name : '';
+  document.getElementById('new-day-name').value = id ? days[id].name : '';
   openModal('modal-add-day');
 }
 
@@ -1801,11 +2164,15 @@ function saveDay() {
   const name = document.getElementById('new-day-name').value.trim();
   if (!name) return;
   const data = getData();
+  const days = getUserDays(data);
   if (editingDayId) {
-    data.workoutDays[editingDayId].name = name;
+    days[editingDayId].name = name;
   } else {
     const id = 'day_' + Date.now();
-    data.workoutDays[id] = { name, exercises: [] };
+    days[id] = { name, exercises: [] };
+    if (data.users && currentUserId && data.users[currentUserId] && data.users[currentUserId].isNew) {
+      data.users[currentUserId].isNew = false;
+    }
   }
   setData(data);
   closeModal('modal-add-day');
@@ -1817,7 +2184,8 @@ function deleteDay(id, e) {
   e.stopPropagation();
   if (!confirm('Delete this workout day?')) return;
   const data = getData();
-  delete data.workoutDays[id];
+  const days = getUserDays(data);
+  delete days[id];
   setData(data);
   if (activeDayId === id) { activeDayId = null; document.getElementById('builder-day-detail').innerHTML = '<div class="empty"><div class="icon">📅</div><p>Select a day to manage its exercises.</p></div>'; }
   if (selectedDayId === id) selectedDayId = null;
@@ -1832,24 +2200,27 @@ function deleteDay(id, e) {
 function renderLibrary() {
   ensureSeededData();
   const data = getData();
-  const filterDay = document.getElementById('library-filter-day').value;
+  const filterDayElement = document.getElementById('library-filter-day');
+  const filterDay = filterDayElement ? filterDayElement.value : '';
   const searchText = (document.getElementById('library-search').value || '').toLowerCase();
   
   // Populate day filter
-  const dayFilter = document.getElementById('library-filter-day');
-  if (dayFilter && !dayFilter.dataset.populated) {
-    dayFilter.dataset.populated = 'true';
+  const dayFilter = filterDayElement;
+  const selectedDay = filterDay;
+  const userDays = getUserDays(data);
+  if (dayFilter) {
     dayFilter.innerHTML = '<option value="">All Exercises</option>' +
-      Object.keys(data.workoutDays).map(id =>
-        `<option value="${id}">${data.workoutDays[id].name}</option>`
+      Object.keys(userDays).map(id =>
+        `<option value="${id}">${userDays[id].name}</option>`
       ).join('');
+    if (selectedDay) dayFilter.value = selectedDay;
   }
   
   let exerciseIds = Object.keys(data.exercises);
   
   if (filterDay) {
-    const day = data.workoutDays[filterDay];
-    exerciseIds = day.exercises || [];
+    const day = userDays[filterDay];
+    exerciseIds = day ? (day.exercises || []) : [];
   }
   
   if (searchText) {
@@ -1927,8 +2298,8 @@ function deleteExercise(id) {
   if (!confirm('Delete this exercise? It will also be removed from all workout days.')) return;
   const data = getData();
   delete data.exercises[id];
-  // Remove from all days
-  Object.values(data.workoutDays).forEach(day => {
+  const userDays = getUserDays(data);
+  Object.values(userDays).forEach(day => {
     if (day.exercises) day.exercises = day.exercises.filter(eid => eid !== id);
   });
   setData(data);
@@ -1965,13 +2336,15 @@ function importDefaultLibrary() {
 
 function populateHistoryFilter() {
   const data = getData();
-  
+  if (!currentUserId || !data.users[currentUserId]) return;
+
   // Populate day filter
   const dayFilter = document.getElementById('history-filter-day');
   if (dayFilter) {
+    const userDays = getUserDays(data);
     dayFilter.innerHTML = '<option value="">All Days</option>' +
-      Object.keys(data.workoutDays).map(id =>
-        `<option value="${id}">${data.workoutDays[id].name}</option>`
+      Object.keys(userDays).map(id =>
+        `<option value="${id}">${userDays[id].name}</option>`
       ).join('');
   }
   
@@ -1987,6 +2360,7 @@ function populateHistoryFilter() {
 
 function populateHistoryFilterExercises() {
   const data = getData();
+  if (!currentUserId || !data.users[currentUserId]) return;
   const dayId = document.getElementById('history-filter-day').value;
   const exFilter = document.getElementById('history-filter-exercise');
   const currentValue = exFilter.value;
@@ -1999,9 +2373,9 @@ function populateHistoryFilterExercises() {
       ).join('');
   } else {
     // Show only exercises from selected day
-    const day = data.workoutDays[dayId];
-    const dayExIds = day.exercises || [];
-    exFilter.innerHTML = '<option value="">All Exercises in ' + day.name + '</option>' +
+    const day = getUserDay(data, dayId);
+    const dayExIds = day ? (day.exercises || []) : [];
+    exFilter.innerHTML = '<option value="">All Exercises in ' + (day ? day.name : '') + '</option>' +
       dayExIds.map(exId => {
         const ex = data.exercises[exId];
         return ex ? `<option value="${exId}">${ex.name}</option>` : '';
@@ -2011,6 +2385,13 @@ function populateHistoryFilterExercises() {
 
 function renderHistory() {
   const data = getData();
+  if (!currentUserId || !data.users[currentUserId]) {
+    const list = document.getElementById('history-list');
+    if (list) {
+      list.innerHTML = '<div class="empty"><div class="icon">📊</div><p>Please unlock a profile to view history.</p></div>';
+    }
+    return;
+  }
   const logs = (data.logs[currentUserId] || []).slice().reverse();
   const filterDay = document.getElementById('history-filter-day').value;
   const filterEx = document.getElementById('history-filter-exercise').value;
@@ -2019,8 +2400,8 @@ function renderHistory() {
 
   let dayExIds = [];
   if (filterDay) {
-    const day = data.workoutDays[filterDay];
-    dayExIds = day.exercises || [];
+    const day = getUserDay(data, filterDay);
+    dayExIds = day ? (day.exercises || []) : [];
   }
 
   const filtered = logs.filter(l => {
@@ -2087,6 +2468,108 @@ document.addEventListener('keydown', function(e) {
   }
 });
 
+// ===== Profile modal & editing =====
+function openProfile() {
+  if (!currentUserId) return alert('Please unlock with your profile first.');
+  const data = getData();
+  const u = data.users[currentUserId];
+  document.getElementById('profile-name').value = u.name || '';
+  document.getElementById('profile-pin').value = '';
+  renderProfileLogs();
+  openModal('modal-profile');
+}
+
+function saveProfileEdits() {
+  const newName = document.getElementById('profile-name').value.trim();
+  const newPin = document.getElementById('profile-pin').value.trim();
+  if (!newName) return alert('Name cannot be empty');
+  const data = getData();
+  const u = data.users[currentUserId];
+  u.name = newName;
+  if (newPin) {
+    if (!/^\d{4}$/.test(newPin)) return alert('PIN must be 4 digits');
+    u.pinHash = hashPin(newPin);
+  }
+  data.users[currentUserId] = u;
+  setData(data);
+  document.getElementById('header-username').textContent = u.name;
+  closeModal('modal-profile');
+  alert('Profile updated');
+}
+
+function renderProfileLogs() {
+  const data = getData();
+  const logs = (data.logs[currentUserId] || []).map((l, idx) => ({...l, _idx: idx})).reverse();
+  const container = document.getElementById('profile-logs');
+  if (!logs.length) { container.innerHTML = '<div class="text-muted">No logged sets yet.</div>'; return; }
+  container.innerHTML = logs.map(l => {
+    const ex = data.exercises[l.exId] || { name: 'Unknown' };
+    return `<div style="padding:8px; border-bottom:1px solid var(--border); display:flex; gap:8px; align-items:flex-start;">
+      <div style="flex:1">
+        <div style="font-weight:600">${ex.name}</div>
+        <div class="text-xs text-muted">${new Date(l.date).toLocaleString()}</div>
+        <div style="margin-top:6px">Weight: <span class="mono">${l.weight}</span> &nbsp; Reps: ${l.reps}</div>
+        ${l.notes ? `<div class="text-xs" style="margin-top:6px">Notes: ${l.notes}</div>` : ''}
+      </div>
+      <div style="display:flex; flex-direction:column; gap:6px">
+        <button class="btn btn-sm btn-secondary" onclick="profileEditLog(${l._idx})">Edit</button>
+        <button class="btn btn-sm btn-danger" onclick="profileDeleteLog(${l._idx})">Delete</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function profileEditLog(idx) {
+  const data = getData();
+  const logs = data.logs[currentUserId] || [];
+  const l = logs[idx];
+  if (!l) return alert('Log not found');
+  const ex = data.exercises[l.exId] || { name: 'Unknown' };
+  const modalInner = document.getElementById('profile-modal-inner');
+  modalInner.scrollIntoView({ behavior: 'smooth' });
+  const editor = document.createElement('div');
+  editor.innerHTML = `
+    <div style="margin-top:10px;">
+      <div class="form-group"><label class="label">Exercise</label><div class="input">${ex.name}</div></div>
+      <div class="form-group"><label class="label">Weight</label><input id="_edit_weight" class="input mono" value="${l.weight}"></div>
+      <div class="form-group"><label class="label">Reps</label><input id="_edit_reps" class="input" value="${l.reps}"></div>
+      <div class="form-group"><label class="label">Notes</label><input id="_edit_notes" class="input" value="${l.notes || ''}"></div>
+      <div style="display:flex; gap:8px; margin-top:8px; justify-content:flex-end;">
+        <button class="btn btn-secondary" onclick="renderProfileLogs();">Cancel</button>
+        <button class="btn btn-primary" onclick="profileSaveLog(${idx})">Save</button>
+      </div>
+    </div>
+  `;
+  // replace logs container with editor temporarily
+  const container = document.getElementById('profile-logs');
+  container.innerHTML = '';
+  container.appendChild(editor);
+}
+
+function profileSaveLog(idx) {
+  const data = getData();
+  const logs = data.logs[currentUserId] || [];
+  if (!logs[idx]) return alert('Log not found');
+  const w = document.getElementById('_edit_weight').value.trim();
+  const r = document.getElementById('_edit_reps').value.trim();
+  const n = document.getElementById('_edit_notes').value.trim();
+  logs[idx].weight = w;
+  logs[idx].reps = r;
+  logs[idx].notes = n;
+  setData(data);
+  renderProfileLogs();
+  alert('Log updated');
+}
+
+function profileDeleteLog(idx) {
+  if (!confirm('Delete this logged set?')) return;
+  const data = getData();
+  const logs = data.logs[currentUserId] || [];
+  logs.splice(idx,1);
+  setData(data);
+  renderProfileLogs();
+}
+
 // ── Shake animation ──
 const style = document.createElement('style');
 style.textContent = `@keyframes shake {
@@ -2100,6 +2583,52 @@ if ('serviceWorker' in navigator) {
       .then(reg => console.log('Service worker registered:', reg.scope))
       .catch(err => console.warn('Service worker registration failed:', err));
   });
+}
+
+// Show status indicator (green star)
+function showRuntimeWarningIfNeeded() {
+  const indicator = document.getElementById('status-indicator');
+  if (!indicator) return;
+  // Always show green star to indicate app is loaded
+  indicator.textContent = '✨';
+  indicator.style.display = 'block';
+}
+
+showRuntimeWarningIfNeeded();
+
+// Welcome / tour helpers
+function showWelcomeIfNeeded() {
+  try {
+    const d = getData();
+    const u = d.users[currentUserId];
+    if (!u) return;
+    // Always show welcome for brand new users or if they haven't seen it yet
+    if (!u.seenWelcome || u.isNew) {
+      openModal('modal-welcome');
+    }
+  } catch (e) {}
+}
+
+let _welcomeStep = 0;
+function startWelcomeTour() {
+  closeModal('modal-welcome');
+  _welcomeStep = 0;
+  const tabs = ['dashboard','builder','library','history'];
+  function step() {
+    if (_welcomeStep >= tabs.length) {
+      // finish
+      const d = getData(); if (d.users && d.users[currentUserId]) { d.users[currentUserId].seenWelcome = true; d.users[currentUserId].isNew = false; setData(d); }
+      currentUser.isNew = false;
+      renderBuilder();
+      renderLibrary();
+      alert('Tour finished — enjoy H.W. Log!');
+      return;
+    }
+    switchTab(tabs[_welcomeStep]);
+    _welcomeStep++;
+    setTimeout(step, 900);
+  }
+  step();
 }
 </script>
 </body>

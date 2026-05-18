@@ -37,8 +37,6 @@
     color: var(--text);
     min-height: 100vh;
     overflow-x: hidden;
-    max-width: 430px;
-    margin: 0 auto;
   }
 
   /* ── PIN SCREEN ── */
@@ -139,6 +137,11 @@
   /* prevent horizontal pan on iPhone */
   @media (pointer: coarse) {
     body { touch-action: pan-y; }
+  }
+
+  /* On small screens constrain width to approximate iPhone sizes */
+  @media (max-width: 680px) {
+    body { max-width: 430px; margin: 0 auto; }
   }
   @media (max-width: 680px) {
     .num-btn { padding: 1.1rem; font-size: 1.4rem; }
@@ -651,6 +654,7 @@
 <body>
 
 <!-- ══ PIN SCREEN ══ -->
+<div id="status-indicator" style="position:fixed; top:12px; left:50%; transform:translateX(-50%); z-index:9999; display:none; font-size:1.8rem;"></div>
 <div id="pin-screen">
   <div class="logo">H.W. Log</div>
   <div class="logo-sub">Workout Tracker</div>
@@ -750,7 +754,12 @@
 
   <!-- TAB 1: DASHBOARD -->
   <div class="tab-content active" id="tab-dashboard">
-    <div class="section-title">Today's Workout</div>
+    <div class="flex justify-between items-end" style="gap:12px; margin-bottom:12px;">
+      <div>
+        <div class="section-title">Today's Workout</div>
+        <div id="dashboard-program-label" style="font-size:0.95rem; color:var(--text3); margin-top:6px;"></div>
+      </div>
+    </div>
 
     <div class="day-selector" id="day-selector"></div>
 
@@ -766,6 +775,19 @@
     <div class="flex justify-between items-center mb-4">
       <div class="section-title" style="margin-bottom:0">Workout Builder</div>
       <button class="btn btn-primary btn-sm" onclick="showAddDayModal()">+ Add Day</button>
+    </div>
+    <div class="flex justify-between items-center mb-3">
+      <div class="flex gap-2" style="flex-wrap:wrap; align-items:center;">
+        <select class="input" id="builder-program-select" onchange="changeBuilderProgram(this.value)" style="min-width:220px;"></select>
+        <button class="btn btn-secondary btn-sm" onclick="showCreateProgramModal()">+ Program</button>
+        <button class="btn btn-secondary btn-sm" onclick="renameProgram()">Rename</button>
+      </div>
+      <div class="flex gap-2" style="flex-wrap:wrap; align-items:center;">
+        <button class="btn btn-secondary btn-sm" onclick="exportProgram()">Export</button>
+        <label class="btn btn-secondary btn-sm" style="cursor:pointer; margin:0;">
+          Import<input id="import-program-file" type="file" accept="application/json" onchange="handleProgramImport(event)" style="display:none">
+        </label>
+      </div>
     </div>
     <div class="builder-layout">
       <div>
@@ -863,6 +885,21 @@
     <div class="modal-actions">
       <button class="btn btn-secondary" onclick="closeModal('modal-add-day')">Cancel</button>
       <button class="btn btn-primary" onclick="saveDay()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Add Program -->
+<div class="modal-overlay" id="modal-add-program">
+  <div class="modal">
+    <div class="modal-title" id="modal-add-program-title">Add Program</div>
+    <div class="form-group">
+      <label class="label">Program Name</label>
+      <input class="input" id="new-program-name" placeholder="e.g. 4-Day Split, Full Body">
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal('modal-add-program')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveProgram()">Save</button>
     </div>
   </div>
 </div>
@@ -1086,7 +1123,6 @@ function getProgramExercises() {
 function seedDefaultData(d) {
   if (!d.users) d.users = {};
   if (!d.exercises) d.exercises = {};
-  if (!d.workoutDays) d.workoutDays = {};
   if (!d.logs) d.logs = {};
 
   const addExercise = ex => {
@@ -1100,82 +1136,81 @@ function seedDefaultData(d) {
   getProgramExercises().forEach(addExercise);
 
   if (!Object.values(d.users).some(u => u.name === 'Nathan')) {
-    d.users['user_nathan'] = { name: 'Nathan', pinHash: hashPin('0000') };
+    d.users['user_nathan'] = { name: 'Nathan', pinHash: hashPin('0000'), workoutDays: {} };
   }
 
-  const findExerciseId = name => Object.keys(d.exercises).find(id => d.exercises[id].name.toLowerCase() === name.toLowerCase());
-  const planDays = [
-    {
-      id: 'day_full_body',
-      name: 'Full-Body / Cardio / Core',
-      exercises: [
-        'Hax Squat Machine',
-        'Shoulder Press Hammer Machine',
-        'Horizontal Row Machine (Neutral)',
-        'Cable Shoulder Lateral Raise',
-        'Bicep Curls',
-        'Weighted Crunch Machine',
-        'Pallof roll w push'
-      ]
-    },
-    {
-      id: 'day_push',
-      name: 'Push Day',
-      exercises: [
-        'Chest Press DB',
-        'Shoulder Press DB',
-        'Incline Bench',
-        'Forward lean dips',
-        'Chest Fly Machine',
-        'Shoulder lateral raise',
-        'Rear Delt Cable Fly',
-        'Tricep Extension squat bb'
-      ]
-    },
-    {
-      id: 'day_lower_body',
-      name: 'Lower-Body',
-      exercises: [
-        'Hax Squat Machine (Inline & Close)',
-        'Hamstring Curl Machine',
-        'Leg Extension Machine',
-        'Leg Press (Feet High & Wide)',
-        'Seated Calf Raises',
-        'Weighted Crunch Machine hammer',
-        'Pallof roll w push'
-      ]
-    },
-    {
-      id: 'day_pull',
-      name: 'Pull Day',
-      exercises: [
-        'Horizontal Row Machine (Wide Grip)',
-        'Lat Pull Down\'s (Close Grip)',
-        'Assisted Pull-Ups',
-        'Rear Delt Cable Fly',
-        'Cable Face Pulls',
-        'Hammer Curl',
-        'Bicep Curls'
-      ]
-    }
-  ];
-
-  planDays.forEach(day => {
-    if (!d.workoutDays[day.id]) {
-      d.workoutDays[day.id] = {
-        name: day.name,
-        exercises: day.exercises.map(findExerciseId).filter(Boolean)
-      };
-    }
-  });
+  // no shared workout day templates are seeded; every user starts blank
 }
 
 function ensureSeededData() {
   const d = getData();
-  const shouldSeed = !Object.keys(d.exercises).length || !Object.keys(d.workoutDays).length || !Object.values(d.users).some(u => u.name === 'Nathan');
+  const shouldSeed = !Object.keys(d.exercises).length || !Object.values(d.users).some(u => u.name === 'Nathan');
   if (shouldSeed) {
     seedDefaultData(d);
     setData(d);
+  }
+}
+
+function ensureUserPrograms(data) {
+  if (!currentUserId || !data.users || !data.users[currentUserId]) return;
+  const user = data.users[currentUserId];
+  if (!user.programs) user.programs = {};
+  if (!user.activeProgramId || !user.programs[user.activeProgramId]) {
+    const programIds = Object.keys(user.programs);
+    if (programIds.length > 0) {
+      user.activeProgramId = programIds[0];
+    } else {
+      const id = 'program_' + Date.now();
+      const migratedDays = user.workoutDays && Object.keys(user.workoutDays).length ? user.workoutDays : {};
+      if (user.workoutDays) delete user.workoutDays;
+      user.programs[id] = { name: 'My Program', days: migratedDays };
+      user.activeProgramId = id;
+    }
+    setData(data);
+  }
+}
+
+function getUserPrograms(data) {
+  if (!currentUserId || !data.users || !data.users[currentUserId]) return {};
+  const user = data.users[currentUserId];
+  if (!user.programs) user.programs = {};
+  return user.programs;
+}
+
+function getCurrentProgram(data) {
+  if (!currentUserId || !data.users || !data.users[currentUserId]) return null;
+  ensureUserPrograms(data);
+  const user = data.users[currentUserId];
+  return user.programs[user.activeProgramId] || null;
+}
+
+function getUserDays(data) {
+  const program = getCurrentProgram(data);
+  if (program && program.days) return program.days;
+  return {};
+}
+
+function getUserDayIds(data) {
+  return Object.keys(getUserDays(data));
+}
+
+function getUserDay(data, id) {
+  return getUserDays(data)[id];
+}
+
+function setUserDays(data, days) {
+  if (!currentUserId || !data.users[currentUserId]) return;
+  const program = getCurrentProgram(data);
+  if (program) {
+    program.days = days;
+  }
+}
+
+function setCurrentProgram(data, programId) {
+  if (!currentUserId || !data.users || !data.users[currentUserId]) return;
+  const user = data.users[currentUserId];
+  if (user.programs && user.programs[programId]) {
+    user.activeProgramId = programId;
   }
 }
 
@@ -1380,10 +1415,17 @@ function loginUser(id) {
   document.getElementById('header-username').textContent = currentUser.name;
   document.getElementById('pin-screen').style.display = 'none';
   document.getElementById('app').classList.add('active');
+  // Clear global UI state for clean user switch
+  selectedDayId = null;
+  activeDayId = null;
+  editingDayId = null;
   switchTab('dashboard');
   renderDashboard();
-  renderBuilder();
-  renderLibrary();
+  // Only render builder and library for non-new users
+  if (!currentUser.isNew) {
+    renderBuilder();
+    renderLibrary();
+  }
   renderHistory();
   // resume any persisted timer for this user
   resumePersistedTimerIfAny();
@@ -1421,7 +1463,18 @@ function createUser() {
     errEl.textContent = 'That PIN is already in use.'; return;
   }
   const id = 'user_' + Date.now();
-  data.users[id] = { name, pinHash: hashed };
+  const programId = 'program_' + Date.now();
+  data.users[id] = {
+    name,
+    pinHash: hashed,
+    isNew: true,
+    seenWelcome: false,
+    logs: [],
+    programs: {
+      [programId]: { name: 'My Program', days: {} }
+    },
+    activeProgramId: programId
+  };
   setData(data);
   closeModal('modal-create-user');
   renderPinScreen();
@@ -1442,13 +1495,42 @@ function switchTab(tab) {
   if (tab === 'history') { populateHistoryFilter(); renderHistory(); }
 }
 
+function clearNewUserFlag() {
+  const data = getData();
+  if (currentUserId && data.users && data.users[currentUserId]) {
+    data.users[currentUserId].isNew = false;
+    setData(data);
+  }
+}
+
 // ═══════════════════════════════════════════════
 //  TAB 1: DASHBOARD
 // ═══════════════════════════════════════════════
 
 function renderDashboard() {
   const data = getData();
-  const days = data.workoutDays;
+  const user = currentUserId ? (data.users[currentUserId] || {}) : null;
+  const programLabel = document.getElementById('dashboard-program-label');
+  const program = getCurrentProgram(data);
+  if (programLabel) {
+    programLabel.textContent = program ? `Program: ${program.name}` : '';
+  }
+  
+  // For new users, show welcome prompt instead of any data
+  if (user && user.isNew) {
+    selectedDayId = null;
+    const selector = document.getElementById('day-selector');
+    selector.innerHTML = `
+      <div class="empty" style="grid-column:1/-1; padding:1.5rem; text-align:center;">
+        <div style="font-weight:700; margin-bottom:10px;">Welcome, ${user.name}!</div>
+        <div style="color:var(--text3); margin-bottom:16px;">It looks like you're new here. Create your own workout schedule in Builder to get started.</div>
+        <button class="btn btn-primary" onclick="switchTab('builder')">Go to Builder</button>
+      </div>`;
+    document.getElementById('exercise-grid').innerHTML = '';
+    return;
+  }
+
+  const days = getUserDays(data);
   const selector = document.getElementById('day-selector');
   const dayIds = Object.keys(days);
 
@@ -1476,7 +1558,7 @@ function selectDay(id) {
 
 function renderExerciseGrid() {
   const data = getData();
-  const day = data.workoutDays[selectedDayId];
+  const day = getUserDay(data, selectedDayId);
   const grid = document.getElementById('exercise-grid');
   if (!day || !day.exercises || day.exercises.length === 0) {
     grid.innerHTML = '<div class="empty" style="grid-column:1/-1"><div class="icon">🏋️</div><p>No exercises assigned to this day.<br>Go to Builder to add some.</p></div>';
@@ -1808,9 +1890,19 @@ function resumePersistedTimerIfAny() {
 let activeDayId = null;
 
 function renderBuilder() {
+  // Prevent new users from accessing builder before completing welcome
+  if (currentUser && currentUser.isNew) {
+    const list = document.getElementById('builder-day-list');
+    const detail = document.getElementById('builder-day-detail');
+    if (list) list.innerHTML = '<div class="empty"><div class="icon">📅</div><p>Please take the welcome tour first.</p></div>';
+    if (detail) detail.innerHTML = '<div class="empty"><div class="icon">📅</div><p>Start in the Dashboard to begin.</p></div>';
+    return;
+  }
   ensureSeededData();
   const data = getData();
-  const days = data.workoutDays || {};
+  ensureUserPrograms(data);
+  renderBuilderProgramControls(data);
+  const days = getUserDays(data) || {};
   const dayIds = Object.keys(days);
   const list = document.getElementById('builder-day-list');
   const detail = document.getElementById('builder-day-detail');
@@ -1847,6 +1939,111 @@ function renderBuilder() {
   }
 }
 
+function renderBuilderProgramControls(data) {
+  const programSelect = document.getElementById('builder-program-select');
+  if (!programSelect) return;
+  const programs = getUserPrograms(data);
+  const currentProgramId = data.users[currentUserId] && data.users[currentUserId].activeProgramId;
+  programSelect.innerHTML = Object.keys(programs).map(id =>
+    `<option value="${id}"${id === currentProgramId ? ' selected' : ''}>${programs[id].name}</option>`
+  ).join('');
+}
+
+function changeBuilderProgram(programId) {
+  const data = getData();
+  setCurrentProgram(data, programId);
+  setData(data);
+  activeDayId = null;
+  renderBuilder();
+  renderDashboard();
+}
+
+let editingProgramId = null;
+function showCreateProgramModal(id = null) {
+  const data = getData();
+  editingProgramId = id;
+  const title = document.getElementById('modal-add-program-title');
+  const input = document.getElementById('new-program-name');
+  title.textContent = id ? 'Rename Program' : 'Add Program';
+  input.value = id && data.users[currentUserId] && data.users[currentUserId].programs && data.users[currentUserId].programs[id]
+    ? data.users[currentUserId].programs[id].name : '';
+  openModal('modal-add-program');
+}
+
+function renameProgram() {
+  const data = getData();
+  const user = data.users[currentUserId];
+  if (!user || !user.activeProgramId) return;
+  showCreateProgramModal(user.activeProgramId);
+}
+
+function saveProgram() {
+  const name = document.getElementById('new-program-name').value.trim();
+  if (!name) return alert('Please enter a program name.');
+  const data = getData();
+  const user = data.users[currentUserId];
+  if (!user) return;
+  if (editingProgramId && user.programs[editingProgramId]) {
+    user.programs[editingProgramId].name = name;
+  } else {
+    const id = 'program_' + Date.now();
+    user.programs[id] = { name, days: {} };
+    user.activeProgramId = id;
+    activeDayId = null;
+  }
+  setData(data);
+  closeModal('modal-add-program');
+  renderBuilder();
+}
+
+function exportProgram() {
+  const data = getData();
+  const program = getCurrentProgram(data);
+  if (!program) return alert('No program to export.');
+  const payload = { name: program.name, days: program.days };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${program.name.replace(/[^a-z0-9]+/gi, '_').replace(/^_+|_+$/g, '') || 'program'}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function handleProgramImport(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function () {
+    try {
+      const imported = JSON.parse(reader.result);
+      if (!imported || typeof imported !== 'object') throw new Error('Invalid import file');
+      const name = imported.name || prompt('Program name?', 'Imported Program');
+      if (!name) throw new Error('Program name required');
+      const days = imported.days || imported.workoutDays || {};
+      if (typeof days !== 'object') throw new Error('Invalid days structure');
+      const data = getData();
+      ensureUserPrograms(data);
+      const user = data.users[currentUserId];
+      const id = 'program_' + Date.now();
+      user.programs[id] = { name, days };
+      user.activeProgramId = id;
+      setData(data);
+      activeDayId = null;
+      renderBuilder();
+      renderDashboard();
+      alert('Program imported successfully.');
+    } catch (err) {
+      alert('Import failed: ' + err.message);
+    } finally {
+      event.target.value = '';
+    }
+  };
+  reader.readAsText(file);
+}
+
 function selectBuilderDay(id) {
   activeDayId = id;
   renderBuilder();
@@ -1854,8 +2051,8 @@ function selectBuilderDay(id) {
 
 function renderBuilderDetail() {
   const data = getData();
-  const day = data.workoutDays[activeDayId];
-  const assigned = day.exercises || [];
+  const day = getUserDay(data, activeDayId);
+  const assigned = (day && day.exercises) ? day.exercises : [];
   const available = Object.keys(data.exercises).filter(id => !assigned.includes(id));
 
   const assignedHtml = assigned.length ? assigned.map((exId, idx) => {
@@ -1873,33 +2070,24 @@ function renderBuilderDetail() {
     </div>`;
   }).join('') : '<div class="text-muted text-sm mb-3">No exercises assigned yet.</div>';
 
-  const selectOptions = available.map(id =>
-    `<option value="${id}">${data.exercises[id].name}</option>`
-  ).join('');
-
   document.getElementById('builder-day-detail').innerHTML = `
     <div class="label mb-2">Exercises in <strong>${day.name}</strong></div>
     <div class="exercise-assign-list mb-4">${assignedHtml}</div>
     ${available.length ? `
-    <div class="flex gap-2 items-center">
-      <input class="input" id="builder-ex-search" placeholder="Search exercises to add..." oninput="filterBuilderSelect()" style="flex:1; min-width:180px;">
-      <select class="input add-exercise-select" id="builder-ex-select" style="flex:1;">
-        <option value="">Select exercise to add...</option>
-        ${selectOptions}
-      </select>
-      <button class="btn btn-primary btn-sm" onclick="addExToDay()" style="white-space:nowrap">+ Add</button>
+    <div style="position:relative;">
+      <input class="input" id="builder-ex-search" placeholder="Search & select exercise..." oninput="filterBuilderSelect()" style="width:100%; padding-right:40px;">
+      <div id="builder-ex-dropdown" style="position:absolute; top:100%; left:0; right:0; max-height:300px; overflow-y:auto; background:var(--bg2); border:1px solid var(--border); border-top:none; border-radius:0 0 8px 8px; display:none; z-index:10;"></div>
     </div>
     ` : '<div class="text-muted text-sm">All exercises are already assigned.</div>'}
   `;
 }
 
-function addExToDay() {
-  const sel = document.getElementById('builder-ex-select');
-  const exId = sel.value;
+function addExToDay(exId) {
   if (!exId) return;
   const data = getData();
-  if (!data.workoutDays[activeDayId].exercises) data.workoutDays[activeDayId].exercises = [];
-  const assigned = data.workoutDays[activeDayId].exercises;
+  const days = getUserDays(data);
+  if (!days[activeDayId].exercises) days[activeDayId].exercises = [];
+  const assigned = days[activeDayId].exercises;
   const last = assigned.length ? assigned[assigned.length - 1] : null;
   if (last === exId) {
     if (!confirm('This exercise is the same as the last one in the sequence. Add anyway?')) return;
@@ -1914,17 +2102,45 @@ function addExToDay() {
 
 function filterBuilderSelect() {
   const q = (document.getElementById('builder-ex-search').value || '').toLowerCase();
-  const sel = document.getElementById('builder-ex-select');
-  for (let i = 0; i < sel.options.length; i++) {
-    const opt = sel.options[i];
-    if (!q) { opt.style.display = ''; continue; }
-    opt.style.display = opt.text.toLowerCase().includes(q) ? '' : 'none';
+  const dropdown = document.getElementById('builder-ex-dropdown');
+  const data = getData();
+  const day = getUserDay(data, activeDayId);
+  const assigned = (day && day.exercises) ? day.exercises : [];
+  const available = Object.keys(data.exercises).filter(id => !assigned.includes(id));
+  
+  if (!q) {
+    dropdown.style.display = 'none';
+    return;
   }
+  
+  const filtered = available.filter(id => {
+    const ex = data.exercises[id];
+    return ex && ex.name.toLowerCase().includes(q);
+  });
+  
+  if (filtered.length === 0) {
+    dropdown.innerHTML = '<div style="padding:12px; color:var(--text3); text-align:center;">No exercises found</div>';
+    dropdown.style.display = 'block';
+    return;
+  }
+  
+  dropdown.innerHTML = filtered.map(id => {
+    const ex = data.exercises[id];
+    return `<div style="padding:10px 12px; border-bottom:1px solid var(--border); cursor:pointer; display:flex; justify-content:space-between; align-items:center;" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background='transparent'" onclick="addExToDay('${id}')">
+      <div>
+        <div style="font-weight:500;">${ex.name}</div>
+        <div style="font-size:0.85rem; color:var(--text3);">${ex.muscle || ''}</div>
+      </div>
+      <button class="btn btn-primary btn-sm" style="white-space:nowrap;">+ Add</button>
+    </div>`;
+  }).join('');
+  dropdown.style.display = 'block';
 }
 
 function removeExFromDay(exId) {
   const data = getData();
-  data.workoutDays[activeDayId].exercises = data.workoutDays[activeDayId].exercises.filter(id => id !== exId);
+  const days = getUserDays(data);
+  days[activeDayId].exercises = days[activeDayId].exercises.filter(id => id !== exId);
   setData(data);
   renderBuilder();
   renderDashboard();
@@ -1933,8 +2149,9 @@ function removeExFromDay(exId) {
 function showAddDayModal(id = null) {
   editingDayId = id;
   const data = getData();
+  const days = getUserDays(data);
   document.getElementById('modal-add-day-title').textContent = id ? 'Rename Day' : 'Add Workout Day';
-  document.getElementById('new-day-name').value = id ? data.workoutDays[id].name : '';
+  document.getElementById('new-day-name').value = id ? days[id].name : '';
   openModal('modal-add-day');
 }
 
@@ -1947,11 +2164,15 @@ function saveDay() {
   const name = document.getElementById('new-day-name').value.trim();
   if (!name) return;
   const data = getData();
+  const days = getUserDays(data);
   if (editingDayId) {
-    data.workoutDays[editingDayId].name = name;
+    days[editingDayId].name = name;
   } else {
     const id = 'day_' + Date.now();
-    data.workoutDays[id] = { name, exercises: [] };
+    days[id] = { name, exercises: [] };
+    if (data.users && currentUserId && data.users[currentUserId] && data.users[currentUserId].isNew) {
+      data.users[currentUserId].isNew = false;
+    }
   }
   setData(data);
   closeModal('modal-add-day');
@@ -1963,7 +2184,8 @@ function deleteDay(id, e) {
   e.stopPropagation();
   if (!confirm('Delete this workout day?')) return;
   const data = getData();
-  delete data.workoutDays[id];
+  const days = getUserDays(data);
+  delete days[id];
   setData(data);
   if (activeDayId === id) { activeDayId = null; document.getElementById('builder-day-detail').innerHTML = '<div class="empty"><div class="icon">📅</div><p>Select a day to manage its exercises.</p></div>'; }
   if (selectedDayId === id) selectedDayId = null;
@@ -1978,24 +2200,27 @@ function deleteDay(id, e) {
 function renderLibrary() {
   ensureSeededData();
   const data = getData();
-  const filterDay = document.getElementById('library-filter-day').value;
+  const filterDayElement = document.getElementById('library-filter-day');
+  const filterDay = filterDayElement ? filterDayElement.value : '';
   const searchText = (document.getElementById('library-search').value || '').toLowerCase();
   
   // Populate day filter
-  const dayFilter = document.getElementById('library-filter-day');
-  if (dayFilter && !dayFilter.dataset.populated) {
-    dayFilter.dataset.populated = 'true';
+  const dayFilter = filterDayElement;
+  const selectedDay = filterDay;
+  const userDays = getUserDays(data);
+  if (dayFilter) {
     dayFilter.innerHTML = '<option value="">All Exercises</option>' +
-      Object.keys(data.workoutDays).map(id =>
-        `<option value="${id}">${data.workoutDays[id].name}</option>`
+      Object.keys(userDays).map(id =>
+        `<option value="${id}">${userDays[id].name}</option>`
       ).join('');
+    if (selectedDay) dayFilter.value = selectedDay;
   }
   
   let exerciseIds = Object.keys(data.exercises);
   
   if (filterDay) {
-    const day = data.workoutDays[filterDay];
-    exerciseIds = day.exercises || [];
+    const day = userDays[filterDay];
+    exerciseIds = day ? (day.exercises || []) : [];
   }
   
   if (searchText) {
@@ -2073,8 +2298,8 @@ function deleteExercise(id) {
   if (!confirm('Delete this exercise? It will also be removed from all workout days.')) return;
   const data = getData();
   delete data.exercises[id];
-  // Remove from all days
-  Object.values(data.workoutDays).forEach(day => {
+  const userDays = getUserDays(data);
+  Object.values(userDays).forEach(day => {
     if (day.exercises) day.exercises = day.exercises.filter(eid => eid !== id);
   });
   setData(data);
@@ -2111,13 +2336,15 @@ function importDefaultLibrary() {
 
 function populateHistoryFilter() {
   const data = getData();
-  
+  if (!currentUserId || !data.users[currentUserId]) return;
+
   // Populate day filter
   const dayFilter = document.getElementById('history-filter-day');
   if (dayFilter) {
+    const userDays = getUserDays(data);
     dayFilter.innerHTML = '<option value="">All Days</option>' +
-      Object.keys(data.workoutDays).map(id =>
-        `<option value="${id}">${data.workoutDays[id].name}</option>`
+      Object.keys(userDays).map(id =>
+        `<option value="${id}">${userDays[id].name}</option>`
       ).join('');
   }
   
@@ -2133,6 +2360,7 @@ function populateHistoryFilter() {
 
 function populateHistoryFilterExercises() {
   const data = getData();
+  if (!currentUserId || !data.users[currentUserId]) return;
   const dayId = document.getElementById('history-filter-day').value;
   const exFilter = document.getElementById('history-filter-exercise');
   const currentValue = exFilter.value;
@@ -2145,9 +2373,9 @@ function populateHistoryFilterExercises() {
       ).join('');
   } else {
     // Show only exercises from selected day
-    const day = data.workoutDays[dayId];
-    const dayExIds = day.exercises || [];
-    exFilter.innerHTML = '<option value="">All Exercises in ' + day.name + '</option>' +
+    const day = getUserDay(data, dayId);
+    const dayExIds = day ? (day.exercises || []) : [];
+    exFilter.innerHTML = '<option value="">All Exercises in ' + (day ? day.name : '') + '</option>' +
       dayExIds.map(exId => {
         const ex = data.exercises[exId];
         return ex ? `<option value="${exId}">${ex.name}</option>` : '';
@@ -2157,6 +2385,13 @@ function populateHistoryFilterExercises() {
 
 function renderHistory() {
   const data = getData();
+  if (!currentUserId || !data.users[currentUserId]) {
+    const list = document.getElementById('history-list');
+    if (list) {
+      list.innerHTML = '<div class="empty"><div class="icon">📊</div><p>Please unlock a profile to view history.</p></div>';
+    }
+    return;
+  }
   const logs = (data.logs[currentUserId] || []).slice().reverse();
   const filterDay = document.getElementById('history-filter-day').value;
   const filterEx = document.getElementById('history-filter-exercise').value;
@@ -2165,8 +2400,8 @@ function renderHistory() {
 
   let dayExIds = [];
   if (filterDay) {
-    const day = data.workoutDays[filterDay];
-    dayExIds = day.exercises || [];
+    const day = getUserDay(data, filterDay);
+    dayExIds = day ? (day.exercises || []) : [];
   }
 
   const filtered = logs.filter(l => {
@@ -2350,13 +2585,25 @@ if ('serviceWorker' in navigator) {
   });
 }
 
+// Show status indicator (green star)
+function showRuntimeWarningIfNeeded() {
+  const indicator = document.getElementById('status-indicator');
+  if (!indicator) return;
+  // Always show green star to indicate app is loaded
+  indicator.textContent = '✨';
+  indicator.style.display = 'block';
+}
+
+showRuntimeWarningIfNeeded();
+
 // Welcome / tour helpers
 function showWelcomeIfNeeded() {
   try {
     const d = getData();
     const u = d.users[currentUserId];
     if (!u) return;
-    if (!u.seenWelcome) {
+    // Always show welcome for brand new users or if they haven't seen it yet
+    if (!u.seenWelcome || u.isNew) {
       openModal('modal-welcome');
     }
   } catch (e) {}
@@ -2370,7 +2617,10 @@ function startWelcomeTour() {
   function step() {
     if (_welcomeStep >= tabs.length) {
       // finish
-      const d = getData(); if (d.users && d.users[currentUserId]) { d.users[currentUserId].seenWelcome = true; setData(d); }
+      const d = getData(); if (d.users && d.users[currentUserId]) { d.users[currentUserId].seenWelcome = true; d.users[currentUserId].isNew = false; setData(d); }
+      currentUser.isNew = false;
+      renderBuilder();
+      renderLibrary();
       alert('Tour finished — enjoy H.W. Log!');
       return;
     }
