@@ -750,6 +750,7 @@
     <button class="tab-btn" onclick="switchTab('builder')">Builder</button>
     <button class="tab-btn" onclick="switchTab('library')">Library</button>
     <button class="tab-btn" onclick="switchTab('history')">History</button>
+    <button class="tab-btn" onclick="switchTab('community')">Community</button>
   </nav>
 
   <!-- TAB 1: DASHBOARD -->
@@ -832,6 +833,15 @@
       <input type="date" class="input" id="history-filter-date" onchange="renderHistory()" style="max-width:180px;">
     </div>
     <div id="history-list"></div>
+  </div>
+
+  <div class="tab-content" id="tab-community">
+    <div class="section-title">Community Feed</div>
+    <div class="flex justify-between items-center mb-4">
+      <div id="community-status" class="text-sm text-muted">Join the community to share workout summaries.</div>
+      <button class="btn btn-primary btn-sm" id="community-opt-in-btn" onclick="toggleCommunityOptIn()">Join Community</button>
+    </div>
+    <div id="community-feed"></div>
   </div>
 </div>
 
@@ -931,7 +941,12 @@
   </div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js"></script>
 <script>
+const SUPABASE_URL = 'https://jnsfdnymhdaadrqejxoe.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_Jj6DN4RYOec3n86ZpCjl3A_7ufCA2_Q';
+const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
 // ═══════════════════════════════════════════════
 //  DATA LAYER
 // ═══════════════════════════════════════════════
@@ -1469,6 +1484,7 @@ function createUser() {
     pinHash: hashed,
     isNew: true,
     seenWelcome: false,
+    communityOptIn: false,
     logs: [],
     programs: {
       [programId]: { name: 'My Program', days: {} }
@@ -1486,13 +1502,97 @@ function createUser() {
 
 function switchTab(tab) {
   document.querySelectorAll('.tab-btn').forEach((b, i) => {
-    const tabs = ['dashboard','builder','library','history'];
+    const tabs = ['dashboard','builder','library','history','community'];
     b.classList.toggle('active', tabs[i] === tab);
   });
   document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
   document.getElementById('tab-' + tab).classList.add('active');
   if (tab === 'builder') renderBuilder();
   if (tab === 'history') { populateHistoryFilter(); renderHistory(); }
+  if (tab === 'community') renderCommunity();
+}
+
+async function fetchCommunityLogs() {
+  const { data, error } = await supabaseClient
+    .from('community_logs')
+    .select('*')
+    .order('created_at', { ascending: false })
+    .limit(50);
+  if (error) {
+    console.warn('Failed to load community feed', error);
+    return [];
+  }
+  return data || [];
+}
+
+async function renderCommunity() {
+  const data = getData();
+  const user = currentUserId ? data.users[currentUserId] : null;
+  const status = document.getElementById('community-status');
+  const btn = document.getElementById('community-opt-in-btn');
+  const feed = document.getElementById('community-feed');
+  if (!status || !btn || !feed) return;
+  const isOptedIn = user && user.communityOptIn;
+  status.textContent = isOptedIn
+    ? 'You are sharing workout logs with the community.'
+    : 'Join the community to share workout summaries.';
+  btn.textContent = isOptedIn ? 'Leave Community' : 'Join Community';
+  const logs = await fetchCommunityLogs();
+  if (!logs.length) {
+    feed.innerHTML = '<div class="empty"><div class="icon">🌐</div><p>No community shares yet.</p></div>';
+    return;
+  }
+  feed.innerHTML = logs.map(entry => {
+    const date = new Date(entry.created_at).toLocaleString();
+    return `<div class="community-card" style="background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:14px; margin-bottom:12px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:10px;">
+        <div>
+          <div style="font-weight:600;">${entry.user_name || 'Anonymous'}</div>
+          <div style="font-size:0.85rem; color:var(--text3);">${entry.exercise_name}</div>
+        </div>
+        <div style="font-size:0.8rem; color:var(--text3);">${date}</div>
+      </div>
+      <div style="display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:8px; margin-bottom:10px;">
+        <div style="background:var(--surface2); border-radius:10px; padding:10px;"><strong>${entry.weight}</strong><div class="text-xs text-muted">Weight</div></div>
+        <div style="background:var(--surface2); border-radius:10px; padding:10px;"><strong>${entry.reps}</strong><div class="text-xs text-muted">Reps</div></div>
+        <div style="background:var(--surface2); border-radius:10px; padding:10px;"><strong>${entry.rest || 'n/a'}</strong><div class="text-xs text-muted">Rest</div></div>
+      </div>
+      ${entry.notes ? `<div class="text-xs" style="color:var(--text);">💬 ${entry.notes}</div>` : ''}
+    </div>`;
+  }).join('');
+}
+
+function toggleCommunityOptIn() {
+  const data = getData();
+  if (!currentUserId || !data.users[currentUserId]) return;
+  const user = data.users[currentUserId];
+  user.communityOptIn = !user.communityOptIn;
+  data.users[currentUserId] = user;
+  setData(data);
+  renderCommunity();
+  alert(user.communityOptIn ? 'You are now sharing with the community.' : 'You have left community sharing.');
+}
+
+async function shareSetToCommunity(exId, weight, reps, notes, rest) {
+  if (!currentUserId) return;
+  const data = getData();
+  const user = data.users[currentUserId];
+  if (!user || !user.communityOptIn) return;
+  const exercise = data.exercises[exId] || { name: 'Unknown' };
+  const { error } = await supabaseClient.from('community_logs').insert([{ 
+    client_user_id: currentUserId,
+    user_name: user.name || 'Anonymous',
+    exercise_name: exercise.name,
+    weight: String(weight),
+    reps,
+    rest: rest ? String(rest) : '',
+    notes: notes || ''
+  }]);
+  if (error) {
+    console.warn('Failed to share community log', error);
+  } else {
+    renderCommunity();
+  }
 }
 
 function clearNewUserFlag() {
@@ -1664,6 +1764,10 @@ function openExPanel(exId) {
           <label class="label">Notes (optional)</label>
           <input class="input" id="log-notes" placeholder="Form felt good, added 5lbs...">
         </div>
+        <div class="form-group" style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">
+          <input type="checkbox" id="share-community-checkbox" style="width:18px; height:18px;" />
+          <label for="share-community-checkbox" class="text-sm">Share this set to community</label>
+        </div>
         <div class="form-group submit-group">
           <button class="btn btn-primary" style="width:100%" onclick="logSet('${exId}')">Log Set & Start Rest Timer</button>
         </div>
@@ -1702,6 +1806,10 @@ function logSet(exId) {
   setData(data);
 
   const rest = getRestTime();
+  if (document.getElementById('share-community-checkbox')?.checked) {
+    shareSetToCommunity(exId, weight, reps, notes, rest);
+  }
+
   openExPanel(exId);
   startTimer(rest);
 }
