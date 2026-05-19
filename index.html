@@ -975,13 +975,171 @@ function getData() {
   }
   return JSON.parse(localStorage.getItem('ironlog') || '{}');
 }
-function setData(data) {
+function setData(data, options = {}) {
   if (!storageAvailable) {
     storageFallback.ironlog = JSON.stringify(data);
     window.name = JSON.stringify(storageFallback);
+  } else {
+    localStorage.setItem('ironlog', JSON.stringify(data));
+  }
+  if (!options.skipRemote && currentUserId) {
+    scheduleRemoteUserSync();
+  }
+}
+
+let remoteSyncTimer = null;
+let isSyncingRemote = false;
+
+function scheduleRemoteUserSync() {
+  if (!currentUserId) return;
+  if (remoteSyncTimer) clearTimeout(remoteSyncTimer);
+  remoteSyncTimer = setTimeout(syncCurrentUserToRemote, 600);
+}
+
+async function fetchRemoteProfile(localUser) {
+  if (!localUser) return null;
+  try {
+    if (localUser.remoteId) {
+      const { data, error } = await supabaseClient.from('profiles').select('*').eq('id', localUser.remoteId).single();
+      if (!error && data) return data;
+    }
+    const { data, error } = await supabaseClient.from('profiles')
+      .select('*')
+      .eq('name', localUser.name)
+      .eq('pin_hash', localUser.pinHash)
+      .limit(1);
+    if (error) {
+      console.warn('Unable to fetch remote profile', error);
+      return null;
+    }
+    return data && data[0] ? data[0] : null;
+  } catch (err) {
+    console.warn('Remote profile fetch failed', err);
+    return null;
+  }
+}
+
+async function createRemoteProfile(localUser) {
+  try {
+    const { data, error } = await supabaseClient.from('profiles').insert([{ 
+      name: localUser.name,
+      pin_hash: localUser.pinHash,
+      data: localUser,
+      updated_at: new Date().toISOString()
+    }]).select().single();
+    if (error) {
+      console.warn('Failed to create remote profile', error);
+      return null;
+    }
+    return data;
+  } catch (err) {
+    console.warn('Remote profile creation failed', err);
+    return null;
+  }
+}
+
+async function updateRemoteProfile(remoteId, localUser) {
+  if (!remoteId) return null;
+  try {
+    const { data, error } = await supabaseClient.from('profiles').update({
+      name: localUser.name,
+      pin_hash: localUser.pinHash,
+      data: localUser,
+      updated_at: new Date().toISOString()
+    }).eq('id', remoteId).select().single();
+    if (error) {
+      console.warn('Failed to update remote profile', error);
+      return null;
+    }
+    return data;
+  } catch (err) {
+    console.warn('Remote profile update failed', err);
+    return null;
+  }
+}
+
+function mergeLocalAndRemoteUser(localUser, remoteRow) {
+  if (!remoteRow || !remoteRow.data) return localUser;
+  let remoteUser = remoteRow.data;
+  if (typeof remoteUser === 'string') {
+    try { remoteUser = JSON.parse(remoteUser); } catch { remoteUser = {}; }
+  }
+  remoteUser.name = localUser.name;
+  remoteUser.pinHash = localUser.pinHash;
+  remoteUser.remoteId = remoteRow.id;
+  if (!remoteUser.updatedAt || new Date(remoteUser.updatedAt).getTime() < new Date(localUser.updatedAt || 0).getTime()) {
+    remoteUser.updatedAt = localUser.updatedAt || new Date().toISOString();
+  }
+  return remoteUser;
+}
+
+async function syncCurrentUserToRemote() {
+  if (isSyncingRemote || !currentUserId) return;
+  const data = getData();
+  const localUser = data.users && data.users[currentUserId];
+  if (!localUser) return;
+  isSyncingRemote = true;
+  try {
+    localUser.updatedAt = new Date().toISOString();
+    data.users[currentUserId] = localUser;
+    setData(data, { skipRemote: true });
+
+    let remoteRow = await fetchRemoteProfile(localUser);
+    if (remoteRow) {
+      localUser.remoteId = remoteRow.id;
+      const remoteUpdated = remoteRow.updated_at ? new Date(remoteRow.updated_at).getTime() : 0;
+      const localUpdated = new Date(localUser.updatedAt || 0).getTime();
+      if (remoteUpdated > localUpdated) {
+        const merged = mergeLocalAndRemoteUser(localUser, remoteRow);
+        data.users[currentUserId] = merged;
+        setData(data, { skipRemote: true });
+        localUser.remoteId = merged.remoteId;
+      }
+      const saved = await updateRemoteProfile(localUser.remoteId, data.users[currentUserId]);
+      if (saved && saved.id) {
+        data.users[currentUserId].remoteId = saved.id;
+        setData(data, { skipRemote: true });
+      }
+    } else {
+      const created = await createRemoteProfile(localUser);
+      if (created && created.id) {
+        data.users[currentUserId].remoteId = created.id;
+        setData(data, { skipRemote: true });
+      }
+    }
+  } finally {
+    isSyncingRemote = false;
+  }
+}
+
+async function loadRemoteUserState(userId) {
+  const data = getData();
+  const localUser = data.users && data.users[userId];
+  if (!localUser) return;
+  const remoteRow = await fetchRemoteProfile(localUser);
+  if (!remoteRow) {
+    await syncCurrentUserToRemote();
     return;
   }
-  localStorage.setItem('ironlog', JSON.stringify(data));
+  if (!localUser.remoteId) {
+    localUser.remoteId = remoteRow.id;
+  }
+  const remoteUpdated = remoteRow.updated_at ? new Date(remoteRow.updated_at).getTime() : 0;
+  const localUpdated = new Date(localUser.updatedAt || 0).getTime();
+  if (remoteUpdated > localUpdated) {
+    const merged = mergeLocalAndRemoteUser(localUser, remoteRow);
+    data.users[userId] = merged;
+    setData(data, { skipRemote: true });
+    if (currentUserId === userId) {
+      currentUser = merged;
+      renderDashboard();
+      renderBuilder();
+      renderLibrary();
+      renderHistory();
+    }
+  } else {
+    await syncCurrentUserToRemote();
+  }
 }
 
 function getDefaultExercises() {
@@ -1444,6 +1602,7 @@ function loginUser(id) {
   // resume any persisted timer for this user
   resumePersistedTimerIfAny();
   showWelcomeIfNeeded();
+  loadRemoteUserState(id);
 }
 
 function lockApp() {
@@ -1488,7 +1647,8 @@ function createUser() {
     programs: {
       [programId]: { name: 'My Program', days: {} }
     },
-    activeProgramId: programId
+    activeProgramId: programId,
+    updatedAt: new Date().toISOString()
   };
   setData(data);
   closeModal('modal-create-user');
