@@ -144,14 +144,21 @@
     body { max-width: 430px; margin: 0 auto; }
   }
   @media (max-width: 680px) {
+    body { padding-bottom: 24px; }
     .num-btn { padding: 1.1rem; font-size: 1.4rem; }
     .exercise-btn { padding: 1.2rem; }
+    .exercise-grid { grid-template-columns: 1fr; gap: 12px; }
     .btn { width: 100%; }
     .flex.justify-between { flex-direction: column; align-items: stretch; }
     .history-filters { flex-direction: column; }
     .history-filters select, .history-filters input { width: 100%; }
     .tab-nav { flex-wrap: wrap; }
+    .tab-btn { flex: 1 1 45%; margin: 4px 4px 0 0; }
     .section-title { font-size: 1.2rem; }
+    .profile-stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .modal { margin: 1rem; }
+    .ex-panel { padding: 1rem; }
+    .log-form { grid-template-columns: 1fr; }
   }
   .user-list {
     margin-top: 1.5rem;
@@ -340,6 +347,21 @@
   .badge-accent { background: rgba(0,212,255,0.15); color: var(--accent); }
   .badge-orange { background: rgba(255,107,53,0.15); color: var(--accent2); }
   .badge-green { background: rgba(74,222,128,0.15); color: var(--success); }
+  .profile-stats { margin-bottom: 1rem; }
+  .profile-stats-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+  }
+  .stat-card {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 12px;
+  }
+  .stat-label { font-size: 0.75rem; color: var(--text3); margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .stat-value { font-size: 1rem; font-weight: 700; color: var(--text); }
+  .profile-actions .btn { flex: 1; }
   .flex { display: flex; }
   .gap-2 { gap: 0.5rem; }
   .gap-3 { gap: 0.75rem; }
@@ -406,6 +428,13 @@
     color: var(--accent);
     margin-top: 8px;
     font-family: 'JetBrains Mono', monospace;
+  }
+  .exercise-btn .ex-posts-left {
+    margin-top: 10px;
+    font-size: 0.72rem;
+    color: var(--text3);
+    border-top: 1px solid rgba(255,255,255,0.08);
+    padding-top: 10px;
   }
 
   /* Exercise detail panel */
@@ -713,6 +742,7 @@
 <div class="modal-overlay" id="modal-profile">
   <div class="modal" id="profile-modal-inner">
     <div class="modal-title">Profile — Edit & Review</div>
+    <div class="profile-stats" id="profile-stats"></div>
     <div class="form-group">
       <label class="label">Name</label>
       <input class="input" id="profile-name">
@@ -720,6 +750,10 @@
     <div class="form-group">
       <label class="label">Change PIN (4 digits)</label>
       <input class="input mono" id="profile-pin" placeholder="Leave blank to keep current">
+    </div>
+    <div class="profile-actions" style="margin-bottom:1rem; display:flex; gap:10px; flex-wrap:wrap;">
+      <button class="btn btn-danger btn-sm" onclick="deleteProfile()">Delete Profile</button>
+      <button class="btn btn-secondary btn-sm" onclick="deleteAllCommunityPosts()">Delete Community Posts</button>
     </div>
     <div class="form-group">
       <label class="label">Your Logged Sets</label>
@@ -1019,6 +1053,72 @@ async function fetchRemoteProfile(localUser) {
   }
 }
 
+async function fetchRemoteProfileByPin(pinHash) {
+  if (!pinHash) return null;
+  try {
+    const { data, error } = await supabaseClient.from('profiles')
+      .select('*')
+      .eq('pin_hash', pinHash);
+    if (error) {
+      console.warn('Unable to fetch remote profile by PIN', error);
+      return null;
+    }
+    if (!data || data.length === 0) {
+      window.remotePinAmbiguous = false;
+      return null;
+    }
+    if (data.length > 1) {
+      console.warn('Multiple remote profiles found for PIN', pinHash);
+      window.remotePinAmbiguous = true;
+      return null;
+    }
+    window.remotePinAmbiguous = false;
+    return data[0];
+  } catch (err) {
+    console.warn('Remote profile lookup by PIN failed', err);
+    window.remotePinAmbiguous = false;
+    return null;
+  }
+}
+
+async function isPinTakenRemotely(pinHash) {
+  if (!pinHash) return false;
+  try {
+    const { data, error } = await supabaseClient.from('profiles')
+      .select('id')
+      .eq('pin_hash', pinHash)
+      .limit(1);
+    if (error) {
+      console.warn('Remote PIN conflict check failed', error);
+      return false;
+    }
+    return Array.isArray(data) && data.length > 0;
+  } catch (err) {
+    console.warn('Remote PIN conflict lookup failed', err);
+    return false;
+  }
+}
+
+function createLocalUserFromRemote(remoteRow) {
+  if (!remoteRow || !remoteRow.data) return null;
+  let remoteUser = remoteRow.data;
+  if (typeof remoteUser === 'string') {
+    try { remoteUser = JSON.parse(remoteUser); } catch { remoteUser = {}; }
+  }
+  remoteUser = normalizeUserProfile(remoteUser);
+  const data = getData();
+  data.users = data.users || {};
+  const id = 'user_' + Date.now();
+  data.users[id] = {
+    ...remoteUser,
+    remoteId: remoteRow.id,
+    pinHash: remoteRow.pin_hash,
+    updatedAt: remoteUser.updatedAt || remoteRow.updated_at || new Date().toISOString()
+  };
+  setData(data, { skipRemote: true });
+  return id;
+}
+
 async function createRemoteProfile(localUser) {
   try {
     const { data, error } = await supabaseClient.from('profiles').insert([{ 
@@ -1055,6 +1155,74 @@ async function updateRemoteProfile(remoteId, localUser) {
   } catch (err) {
     console.warn('Remote profile update failed', err);
     return null;
+  }
+}
+
+async function getRemoteCommunityPostCount(userId) {
+  if (!userId) return 0;
+  try {
+    const { data, error, count } = await supabaseClient.from('community_logs')
+      .select('id', { count: 'exact', head: true })
+      .eq('client_user_id', userId);
+    if (error) {
+      console.warn('Failed to count community posts', error);
+      return 0;
+    }
+    return count || 0;
+  } catch (err) {
+    console.warn('Community post count lookup failed', err);
+    return 0;
+  }
+}
+
+async function refreshCommunityCount() {
+  if (!currentUserId) return 0;
+  const count = await getRemoteCommunityPostCount(currentUserId);
+  const data = getData();
+  if (data.users && data.users[currentUserId]) {
+    data.users[currentUserId].communityPostCount = count;
+    setData(data, { skipRemote: true });
+    if (currentUser && currentUserId && currentUserId in data.users) {
+      currentUser.communityPostCount = count;
+    }
+  }
+  return count;
+}
+
+function getRemainingCommunitySlots() {
+  const data = getData();
+  const user = currentUserId && data.users ? data.users[currentUserId] : null;
+  const used = user ? (user.communityPostCount || 0) : 0;
+  return Math.max(0, 30 - used);
+}
+
+async function deleteRemoteCommunityPosts(userId) {
+  if (!userId) return false;
+  try {
+    const { error } = await supabaseClient.from('community_logs').delete().eq('client_user_id', userId);
+    if (error) {
+      console.warn('Failed to delete remote community posts', error);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.warn('Remote community deletion failed', err);
+    return false;
+  }
+}
+
+async function deleteRemoteProfile(remoteId) {
+  if (!remoteId) return false;
+  try {
+    const { error } = await supabaseClient.from('profiles').delete().eq('id', remoteId);
+    if (error) {
+      console.warn('Failed to delete remote profile', error);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.warn('Remote profile deletion failed', err);
+    return false;
   }
 }
 
@@ -1325,27 +1493,46 @@ function ensureSeededData() {
 
 function ensureUserPrograms(data) {
   if (!currentUserId || !data.users || !data.users[currentUserId]) return;
-  const user = data.users[currentUserId];
+  const user = normalizeUserProfile(data.users[currentUserId]);
+  data.users[currentUserId] = user;
+  setData(data);
+}
+
+function normalizeUserProfile(user) {
+  if (!user || typeof user !== 'object') return user;
   if (!user.programs) user.programs = {};
+  if (user.workoutDays && Object.keys(user.workoutDays).length && !Object.keys(user.programs).length) {
+    const id = 'program_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+    user.programs[id] = { name: 'My Program', days: user.workoutDays };
+    delete user.workoutDays;
+    user.activeProgramId = id;
+  }
   if (!user.activeProgramId || !user.programs[user.activeProgramId]) {
     const programIds = Object.keys(user.programs);
     if (programIds.length > 0) {
       user.activeProgramId = programIds[0];
     } else {
-      const id = 'program_' + Date.now();
-      const migratedDays = user.workoutDays && Object.keys(user.workoutDays).length ? user.workoutDays : {};
-      if (user.workoutDays) delete user.workoutDays;
-      user.programs[id] = { name: 'My Program', days: migratedDays };
+      const id = 'program_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+      user.programs[id] = { name: 'My Program', days: {} };
       user.activeProgramId = id;
     }
-    setData(data);
   }
+  Object.values(user.programs).forEach(program => {
+    if (!program.days) program.days = {};
+    Object.values(program.days).forEach(day => {
+      if (!day.exercises) day.exercises = [];
+      else if (!Array.isArray(day.exercises)) {
+        day.exercises = Object.values(day.exercises).filter(Boolean);
+      }
+    });
+  });
+  return user;
 }
 
 function getUserPrograms(data) {
   if (!currentUserId || !data.users || !data.users[currentUserId]) return {};
-  const user = data.users[currentUserId];
-  if (!user.programs) user.programs = {};
+  const user = normalizeUserProfile(data.users[currentUserId]);
+  data.users[currentUserId] = user;
   return user.programs;
 }
 
@@ -1463,14 +1650,25 @@ function selectUserChip(id) {
   document.getElementById('pin-card-subtitle').dataset.uid = id;
 }
 
-function deleteUser(id, e) {
+async function deleteUser(id, e) {
   e.stopPropagation();
   const data = getData();
   const u = data.users[id];
   if (!confirm(`Delete profile "${u.name}"? This cannot be undone.`)) return;
-  delete data.users[id];
-  setData(data);
+  await removeUserById(id);
   renderPinScreen();
+}
+
+async function removeUserById(userId) {
+  const data = getData();
+  if (!data.users || !data.users[userId]) return;
+  const u = data.users[userId];
+  if (data.logs && data.logs[userId]) delete data.logs[userId];
+  if (u.remoteId) await deleteRemoteProfile(u.remoteId);
+  await deleteRemoteCommunityPosts(userId);
+  delete data.users[userId];
+  setData(data);
+  if (currentUserId === userId) lockApp();
 }
 
 function isIOS() {
@@ -1550,7 +1748,7 @@ function restoreBackup(event) {
   event.target.value = '';
 }
 
-function attemptLogin() {
+async function attemptLogin() {
   const data = getData();
   const hashed = hashPin(pinBuffer);
   const subtitle = document.getElementById('pin-card-subtitle');
@@ -1560,27 +1758,45 @@ function attemptLogin() {
   if (preselectedId && data.users[preselectedId]) {
     const u = data.users[preselectedId];
     if (u.pinHash === hashed) {
-      loginUser(preselectedId);
+      await loginUser(preselectedId);
       return;
     }
   }
+
   // Otherwise search all users
-  const found = Object.keys(data.users).find(id => data.users[id].pinHash === hashed);
+  const found = Object.keys(data.users || {}).find(id => data.users[id].pinHash === hashed);
   if (found) {
-    loginUser(found);
-  } else {
-    document.getElementById('pin-error').textContent = 'Incorrect PIN. Try again.';
+    await loginUser(found);
+    return;
+  }
+
+  // If no local user exists, try remote lookup by PIN
+  const remoteRow = await fetchRemoteProfileByPin(hashed);
+  if (window.remotePinAmbiguous) {
+    document.getElementById('pin-error').textContent = 'This PIN matches multiple profiles. Choose a unique PIN to protect your dashboard.';
     pinBuffer = '';
     updatePinDots();
-    // Shake animation
-    const card = document.querySelector('.pin-card');
-    card.style.animation = 'none';
-    card.offsetHeight;
-    card.style.animation = 'shake 0.3s ease';
+    return;
   }
+  if (remoteRow) {
+    const newId = createLocalUserFromRemote(remoteRow);
+    if (newId) {
+      await loginUser(newId);
+      return;
+    }
+  }
+
+  document.getElementById('pin-error').textContent = 'Incorrect PIN. Try again.';
+  pinBuffer = '';
+  updatePinDots();
+  // Shake animation
+  const card = document.querySelector('.pin-card');
+  card.style.animation = 'none';
+  card.offsetHeight;
+  card.style.animation = 'shake 0.3s ease';
 }
 
-function loginUser(id) {
+async function loginUser(id) {
   const data = getData();
   currentUserId = id;
   currentUser = data.users[id];
@@ -1602,7 +1818,8 @@ function loginUser(id) {
   // resume any persisted timer for this user
   resumePersistedTimerIfAny();
   showWelcomeIfNeeded();
-  loadRemoteUserState(id);
+  await loadRemoteUserState(id);
+  await refreshCommunityCount();
 }
 
 function lockApp() {
@@ -1624,7 +1841,7 @@ function showCreateUser() {
   openModal('modal-create-user');
 }
 
-function createUser() {
+async function createUser() {
   const name = document.getElementById('new-user-name').value.trim();
   const pin = document.getElementById('new-user-pin').value.trim();
   const errEl = document.getElementById('create-user-error');
@@ -1635,6 +1852,10 @@ function createUser() {
   if (Object.values(data.users).some(u => u.pinHash === hashed)) {
     errEl.textContent = 'That PIN is already in use.'; return;
   }
+  if (await isPinTakenRemotely(hashed)) {
+    errEl.textContent = 'That PIN is already linked to an existing profile. Please choose a different PIN.';
+    return;
+  }
   const id = 'user_' + Date.now();
   const programId = 'program_' + Date.now();
   data.users[id] = {
@@ -1643,6 +1864,7 @@ function createUser() {
     isNew: true,
     seenWelcome: false,
     communityOptIn: false,
+    communityPostCount: 0,
     logs: [],
     programs: {
       [programId]: { name: 'My Program', days: {} }
@@ -1703,13 +1925,17 @@ async function renderCommunity() {
   }
   feed.innerHTML = logs.map(entry => {
     const date = new Date(entry.created_at).toLocaleString();
+    const canDelete = currentUserId && entry.client_user_id === currentUserId;
     return `<div class="community-card" style="background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:14px; margin-bottom:12px;">
       <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:10px;">
         <div>
           <div style="font-weight:600;">${entry.user_name || 'Anonymous'}</div>
           <div style="font-size:0.85rem; color:var(--text3);">${entry.exercise_name}</div>
         </div>
-        <div style="font-size:0.8rem; color:var(--text3);">${date}</div>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <div style="font-size:0.8rem; color:var(--text3);">${date}</div>
+          ${canDelete ? `<button class="btn btn-danger btn-sm" onclick="deleteCommunityPost('${entry.id}')">Delete</button>` : ''}
+        </div>
       </div>
       <div style="display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:8px; margin-bottom:10px;">
         <div style="background:var(--surface2); border-radius:10px; padding:10px;"><strong>${entry.weight}</strong><div class="text-xs text-muted">Weight</div></div>
@@ -1734,6 +1960,11 @@ function toggleCommunityOptIn() {
 
 async function shareSetToCommunity(exId, weight, reps, notes, rest) {
   if (!currentUserId) return;
+  const remaining = getRemainingCommunitySlots();
+  if (remaining <= 0) {
+    alert('Community post limit reached. Delete past posts from your profile to make room for new ones.');
+    return;
+  }
   const data = getData();
   const user = data.users[currentUserId];
   if (!user || !user.communityOptIn) return;
@@ -1750,7 +1981,26 @@ async function shareSetToCommunity(exId, weight, reps, notes, rest) {
   if (error) {
     console.warn('Failed to share community log', error);
   } else {
+    await refreshCommunityCount();
     renderCommunity();
+  }
+}
+
+async function deleteCommunityPost(postId) {
+  if (!postId || !currentUserId) return;
+  if (!confirm('Delete this community post?')) return;
+  try {
+    const { error } = await supabaseClient.from('community_logs').delete().eq('id', postId);
+    if (error) {
+      console.warn('Failed to delete community post', error);
+      alert('Unable to delete post.');
+      return;
+    }
+    await refreshCommunityCount();
+    renderCommunity();
+  } catch (err) {
+    console.warn('Community post delete failed', err);
+    alert('Unable to delete post.');
   }
 }
 
@@ -1823,6 +2073,7 @@ function renderExerciseGrid() {
     grid.innerHTML = '<div class="empty" style="grid-column:1/-1"><div class="icon">🏋️</div><p>No exercises assigned to this day.<br>Go to Builder to add some.</p></div>';
     return;
   }
+  const remainingPosts = getRemainingCommunitySlots();
   grid.innerHTML = day.exercises.map(exId => {
     const ex = data.exercises[exId];
     if (!ex) return '';
@@ -1831,6 +2082,7 @@ function renderExerciseGrid() {
       <div class="ex-name">${ex.name}</div>
       <div class="ex-muscle">${ex.muscle || ''}</div>
       ${last ? `<div class="ex-last">${last.weight} lbs × ${last.reps}</div>` : ''}
+      <div class="ex-posts-left">${remainingPosts} post${remainingPosts !== 1 ? 's' : ''} left</div>
     </button>`;
   }).join('');
 }
@@ -2736,12 +2988,14 @@ document.addEventListener('keydown', function(e) {
 });
 
 // ===== Profile modal & editing =====
-function openProfile() {
+async function openProfile() {
   if (!currentUserId) return alert('Please unlock with your profile first.');
   const data = getData();
   const u = data.users[currentUserId];
   document.getElementById('profile-name').value = u.name || '';
   document.getElementById('profile-pin').value = '';
+  await refreshCommunityCount();
+  renderProfileStats();
   renderProfileLogs();
   openModal('modal-profile');
 }
@@ -2760,8 +3014,83 @@ function saveProfileEdits() {
   data.users[currentUserId] = u;
   setData(data);
   document.getElementById('header-username').textContent = u.name;
+  renderProfileStats();
   closeModal('modal-profile');
   alert('Profile updated');
+}
+
+function renderProfileStats() {
+  const data = getData();
+  const user = currentUserId && data.users ? data.users[currentUserId] : null;
+  if (!user) return;
+  const program = getCurrentProgram(data);
+  const days = getUserDays(data);
+  const dayCount = Object.keys(days).length;
+  const exerciseCount = Object.values(days).reduce((count, day) => count + ((day.exercises || []).length), 0);
+  const logCount = (data.logs[currentUserId] || []).length;
+  const postCount = user.communityPostCount || 0;
+  const remaining = Math.max(0, 30 - postCount);
+  const stats = document.getElementById('profile-stats');
+  stats.innerHTML = `
+    <div class="profile-stats-grid">
+      <div class="stat-card">
+        <div class="stat-label">Program</div>
+        <div class="stat-value">${program ? program.name : 'No Program'}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Days</div>
+        <div class="stat-value">${dayCount}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Exercises</div>
+        <div class="stat-value">${exerciseCount}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Logged Sets</div>
+        <div class="stat-value">${logCount}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Community Posts</div>
+        <div class="stat-value">${postCount} / 30</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Slots Remaining</div>
+        <div class="stat-value">${remaining}</div>
+      </div>
+    </div>
+  `;
+}
+
+async function deleteProfile() {
+  if (!currentUserId) return;
+  const data = getData();
+  const u = data.users[currentUserId];
+  if (!confirm(`Delete profile "${u.name}" and all associated workout history and community posts?`)) return;
+  const userId = currentUserId;
+  const remoteId = u.remoteId;
+  delete data.users[userId];
+  if (data.logs && data.logs[userId]) delete data.logs[userId];
+  setData(data);
+  if (remoteId) await deleteRemoteProfile(remoteId);
+  await deleteRemoteCommunityPosts(userId);
+  closeModal('modal-profile');
+  lockApp();
+  renderPinScreen();
+  alert('Profile deleted successfully.');
+}
+
+async function deleteAllCommunityPosts() {
+  if (!currentUserId) return;
+  if (!confirm('Delete all of your community posts?')) return;
+  const ok = await deleteRemoteCommunityPosts(currentUserId);
+  if (ok) {
+    await refreshCommunityCount();
+    renderProfileStats();
+    renderCommunity();
+    alert('Your community posts are deleted.');
+  } else {
+    alert('Unable to delete community posts.');
+  }
 }
 
 function renderProfileLogs() {
