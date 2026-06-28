@@ -509,10 +509,26 @@
   }
   .history-chart {
     display: grid;
-    gap: 8px;
+    gap: 10px;
+    margin-top: 1rem;
+  }
+  .history-chart-title {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 0.5rem;
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: var(--text);
+  }
+  .history-chart-subtitle {
+    font-size: 0.85rem;
+    color: var(--text3);
   }
   .history-chart-bar {
-    display: flex;
+    display: grid;
+    grid-template-columns: minmax(110px, 1fr) 1fr auto;
     align-items: center;
     gap: 12px;
     padding: 12px;
@@ -520,9 +536,9 @@
     border: 1px solid var(--border);
     border-radius: 14px;
   }
+  .history-chart-bar .label { font-size: 0.88rem; color: var(--text2); }
   .history-chart-bar .bar {
-    flex: 1;
-    height: 16px;
+    height: 18px;
     background: linear-gradient(90deg, var(--accent), var(--accent2));
     border-radius: 999px;
     min-width: 40px;
@@ -535,10 +551,16 @@
     border-radius: 999px;
     opacity: 0.18;
   }
-  .history-chart-bar .label { min-width: 130px; font-size: 0.85rem; color: var(--text2); }
-  .history-chart-bar .value { min-width: 70px; text-align: right; font-size: 0.9rem; color: var(--text); font-weight: 600; }
+  .history-chart-bar .value { min-width: 64px; text-align: right; font-size: 0.88rem; color: var(--text); font-weight: 700; }
+  .history-summary-note {
+    color: var(--text2);
+    font-size: 0.9rem;
+    margin-top: 0.75rem;
+  }
   @media (max-width: 900px) {
     .history-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .history-chart-bar { grid-template-columns: 1fr; }
+    .history-chart-bar .value { text-align: left; }
   }
   @media (max-width: 640px) {
     .history-summary-grid { grid-template-columns: 1fr; }
@@ -3069,26 +3091,44 @@ function renderHistorySummary(filtered, data) {
   }, { entry: null, score: 0 }).entry;
 
   const recent = filtered.slice(0, 7);
-  const maxWeight = recent.length ? Math.max(...recent.map(l => parseFloat(l.weight) || 0)) : 1;
+  const uniqueDays = new Set(filtered.map(l => l.date.slice(0, 10))).size;
+  const uniqueExercises = new Set(filtered.map(l => l.exId)).size;
+
+  const dayTotals = Object.values(filtered.reduce((acc, l) => {
+    const dateKey = l.date.slice(0, 10);
+    const volume = (parseFloat(l.weight) || 0) * (parseInt(l.reps) || 0);
+    if (!acc[dateKey]) acc[dateKey] = { dateKey, volume: 0, sets: 0 };
+    acc[dateKey].volume += volume;
+    acc[dateKey].sets += 1;
+    return acc;
+  }, {}));
+
+  const chartRows = dayTotals
+    .sort((a, b) => a.dateKey.localeCompare(b.dateKey))
+    .slice(-7);
+  const maxVolume = chartRows.length ? Math.max(...chartRows.map(row => row.volume)) : 1;
 
   container.innerHTML = `
     <div class="history-summary-grid">
       <div class="history-summary-card"><div class="label">Sets</div><div class="value">${totalSets}</div></div>
       <div class="history-summary-card"><div class="label">Total Volume</div><div class="value">${totalVolume.toLocaleString()}</div></div>
-      <div class="history-summary-card"><div class="label">Avg Weight</div><div class="value">${avgWeight} lbs</div></div>
-      <div class="history-summary-card"><div class="label">Avg Reps</div><div class="value">${avgReps}</div></div>
+      <div class="history-summary-card"><div class="label">Days Logged</div><div class="value">${uniqueDays}</div></div>
+      <div class="history-summary-card"><div class="label">Exercises Seen</div><div class="value">${uniqueExercises}</div></div>
       <div class="history-summary-card"><div class="label">Top Set</div><div class="value">${bestSet ? `${data.exercises[bestSet.exId]?.name || 'Top'} ${bestSet.weight}×${bestSet.reps}` : '—'}</div></div>
     </div>
-    ${recent.length ? `
+    ${chartRows.length ? `
     <div class="history-chart">
-      ${recent.map(l => {
-        const ex = data.exercises[l.exId] || { name: 'Unknown' };
-        const weight = parseFloat(l.weight) || 0;
-        const width = maxWeight ? Math.max(10, (weight / maxWeight) * 100) : 10;
-        return `<div class="history-chart-bar"><span class="label">${ex.name}</span><span class="bar" style="width:${width}%;"></span><span class="value">${weight} lbs</span></div>`;
+      <div class="history-chart-title">
+        <span>Recent Daily Volume</span>
+        <span class="history-chart-subtitle">Last ${chartRows.length} days</span>
+      </div>
+      ${chartRows.map(row => {
+        const label = new Date(row.dateKey).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+        const width = maxVolume ? Math.max(10, (row.volume / maxVolume) * 100) : 10;
+        return `<div class="history-chart-bar"><span class="label">${label} · ${row.sets} set${row.sets === 1 ? '' : 's'}</span><span class="bar" style="width:${width}%;"></span><span class="value">${row.volume.toLocaleString()} vol</span></div>`;
       }).join('')}
     </div>
-    ` : `<div class="history-summary-note">Log a few sets in Dashboard to unlock the workout chart below.</div>`}
+    ` : `<div class="history-summary-note">Log a few sets in Dashboard to generate your history chart.</div>`}
   `;
 }
 
