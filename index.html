@@ -908,7 +908,9 @@
       </select>
       <input type="text" class="input" id="history-search" placeholder="Search exercises..." onkeyup="renderHistory()" style="flex:1; min-width:140px;">
       <input type="date" class="input" id="history-filter-date" onchange="renderHistory()" style="max-width:180px;">
-      <button class="btn btn-secondary btn-sm" style="white-space:nowrap;" onclick="exportHistory()">Export History</button>
+      <button class="btn btn-secondary btn-sm" style="white-space:nowrap;" onclick="exportHistory('json')">Export JSON</button>
+      <button class="btn btn-secondary btn-sm" style="white-space:nowrap;" onclick="exportHistory('csv')">Export CSV</button>
+      <button class="btn btn-secondary btn-sm" style="white-space:nowrap;" onclick="clearHistoryFilters()">Reset Filters</button>
     </div>
     <div id="history-summary" class="history-summary"></div>
     <div id="history-list"></div>
@@ -3055,6 +3057,7 @@ function renderHistorySummary(filtered, data) {
       <div class="history-summary-card"><div class="label">Total Volume</div><div class="value">${totalVolume.toLocaleString()}</div></div>
       <div class="history-summary-card"><div class="label">Avg Weight</div><div class="value">${avgWeight} lbs</div></div>
       <div class="history-summary-card"><div class="label">Avg Reps</div><div class="value">${avgReps}</div></div>
+      <div class="history-summary-card"><div class="label">Top Set</div><div class="value">${bestSet ? `${data.exercises[bestSet.exId]?.name || 'Top'} ${bestSet.weight}×${bestSet.reps}` : '—'}</div></div>
     </div>
     <div class="history-chart">
       ${recent.map(l => {
@@ -3067,7 +3070,43 @@ function renderHistorySummary(filtered, data) {
   `;
 }
 
-function exportHistory() {
+function clearHistoryFilters() {
+  document.getElementById('history-filter-day').value = '';
+  document.getElementById('history-filter-exercise').value = '';
+  document.getElementById('history-filter-date').value = '';
+  document.getElementById('history-search').value = '';
+  renderHistory();
+}
+
+function convertHistoryToCsv(entries) {
+  const rows = [
+    ['Date','Exercise','Day','Weight','Reps','Notes']
+  ];
+  entries.forEach(l => {
+    rows.push([
+      new Date(l.date).toLocaleString(),
+      l.exercise,
+      l.day,
+      l.weight,
+      l.reps,
+      l.notes || ''
+    ]);
+  });
+  return rows.map(r => r.map(field => `"${String(field).replace(/"/g, '""')}"`).join(',')).join('\n');
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function exportHistory(format = 'json') {
   const data = getData();
   if (!currentUserId || !data.users[currentUserId]) return alert('Unlock a profile first.');
   const logs = (data.logs[currentUserId] || []).slice().reverse();
@@ -3079,18 +3118,15 @@ function exportHistory() {
     day: l.dayId ? (getUserDay(data, l.dayId)?.name || '') : '',
     weight: l.weight,
     reps: l.reps,
-    notes: l.notes
+    notes: l.notes || ''
   }));
 
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `hwlog-history-${new Date().toISOString().slice(0,10)}.json`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
+  if (format === 'csv') {
+    const csv = convertHistoryToCsv(payload);
+    downloadBlob(new Blob([csv], { type: 'text/csv;charset=utf-8;' }), `hwlog-history-${new Date().toISOString().slice(0,10)}.csv`);
+  } else {
+    downloadBlob(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }), `hwlog-history-${new Date().toISOString().slice(0,10)}.json`);
+  }
 }
 
 // ═══════════════════════════════════════════════
