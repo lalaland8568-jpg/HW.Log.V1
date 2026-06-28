@@ -2,6 +2,14 @@
 .DS_Store
 Thumbs.db
 
+# Project backups and exports
+index copy.html
+index copy 2.html
+BACKUPS/
+archive/
+TEST/
+*.msi
+
 # Logs
 *.log
 

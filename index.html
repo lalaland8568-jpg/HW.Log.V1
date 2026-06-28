@@ -24,6 +24,8 @@
     --text3: #555568;
     --success: #4ade80;
     --danger: #f87171;
+    --bg2: #1e1e23;
+    --bg3: #26262d;
     --radius: 12px;
     --radius-sm: 8px;
   }
@@ -479,6 +481,48 @@
   .history-row .wt { font-family: 'JetBrains Mono', monospace; font-size: 0.9rem; font-weight: 600; color: var(--accent); min-width: 70px; }
   .history-row .reps { font-size: 0.85rem; color: var(--text2); min-width: 60px; }
   .history-row .note { font-size: 0.75rem; color: var(--text3); flex: 1; font-style: italic; }
+  .history-summary {
+    margin: 1rem 0 0;
+    padding: 1rem;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+  }
+  .history-summary-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+    margin-bottom: 1rem;
+  }
+  .history-summary-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 12px;
+  }
+  .history-summary-card .label { font-size: 0.72rem; color: var(--text3); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+  .history-summary-card .value { font-size: 1.1rem; font-weight: 700; }
+  .history-chart {
+    display: grid;
+    gap: 8px;
+  }
+  .history-chart-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+  }
+  .history-chart-bar .bar {
+    flex: 1;
+    height: 18px;
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    border-radius: 999px;
+    min-width: 30px;
+  }
+  .history-chart-bar .label { min-width: 120px; font-size: 0.85rem; color: var(--text2); }
   .avg-bar {
     display: flex;
     gap: 1rem;
@@ -864,7 +908,9 @@
       </select>
       <input type="text" class="input" id="history-search" placeholder="Search exercises..." onkeyup="renderHistory()" style="flex:1; min-width:140px;">
       <input type="date" class="input" id="history-filter-date" onchange="renderHistory()" style="max-width:180px;">
+      <button class="btn btn-secondary btn-sm" style="white-space:nowrap;" onclick="exportHistory()">Export History</button>
     </div>
+    <div id="history-summary" class="history-summary"></div>
     <div id="history-list"></div>
   </div>
 
@@ -970,6 +1016,26 @@
     <div class="modal-actions">
       <button class="btn btn-secondary" onclick="closeModal('modal-add-exercise')">Cancel</button>
       <button class="btn btn-primary" onclick="saveExercise()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Welcome Tour -->
+<div class="modal-overlay" id="modal-welcome">
+  <div class="modal">
+    <div class="modal-title">Welcome to H.W. Log</div>
+    <div class="form-group">
+      <p>Let's get you set up with the main workflow:</p>
+      <ul style="margin:0 0 0 18px; color:var(--text2);">
+        <li>Create workout days in Builder.</li>
+        <li>Assign exercises to a day.</li>
+        <li>Tap an exercise in Dashboard to log your set.</li>
+        <li>Review progress in History.</li>
+      </ul>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal('modal-welcome')">Later</button>
+      <button class="btn btn-primary" onclick="startWelcomeTour()">Start Tour</button>
     </div>
   </div>
 </div>
@@ -2210,10 +2276,18 @@ function logSet(exId) {
   const reps = parseInt(document.getElementById('log-reps').value);
   const notes = document.getElementById('log-notes').value.trim();
   if (!weight || !reps) { alert('Please enter weight and reps.'); return; }
+  if (!selectedDayId) { alert('Select a workout day before logging a set.'); return; }
 
   const data = getData();
   if (!data.logs[currentUserId]) data.logs[currentUserId] = [];
-  data.logs[currentUserId].push({ exId, weight, reps, notes, date: new Date().toISOString() });
+  data.logs[currentUserId].push({
+    exId,
+    dayId: selectedDayId,
+    weight,
+    reps,
+    notes,
+    date: new Date().toISOString()
+  });
   setData(data);
 
   const rest = getRestTime();
@@ -2908,6 +2982,7 @@ function renderHistory() {
     const list = document.getElementById('history-list');
     if (list) {
       list.innerHTML = '<div class="empty"><div class="icon">📊</div><p>Please unlock a profile to view history.</p></div>';
+      document.getElementById('history-summary').innerHTML = '';
     }
     return;
   }
@@ -2917,14 +2992,8 @@ function renderHistory() {
   const filterDate = document.getElementById('history-filter-date').value;
   const searchText = (document.getElementById('history-search').value || '').toLowerCase();
 
-  let dayExIds = [];
-  if (filterDay) {
-    const day = getUserDay(data, filterDay);
-    dayExIds = day ? (day.exercises || []) : [];
-  }
-
   const filtered = logs.filter(l => {
-    if (filterDay && !dayExIds.includes(l.exId)) return false;
+    if (filterDay && l.dayId !== filterDay) return false;
     if (filterEx && l.exId !== filterEx) return false;
     if (filterDate && !l.date.startsWith(filterDate)) return false;
     if (searchText) {
@@ -2936,6 +3005,7 @@ function renderHistory() {
   });
 
   const list = document.getElementById('history-list');
+  renderHistorySummary(filtered, data);
   if (filtered.length === 0) {
     list.innerHTML = '<div class="empty"><div class="icon">📊</div><p>No history found.</p></div>';
     return;
@@ -2944,9 +3014,13 @@ function renderHistory() {
   list.innerHTML = filtered.map(l => {
     const ex = data.exercises[l.exId];
     const exName = ex ? ex.name : 'Unknown Exercise';
+    const dayName = l.dayId ? (getUserDay(data, l.dayId)?.name || '') : '';
     return `<div class="history-entry">
       <div class="history-entry-header">
-        <div class="history-entry-ex">${exName}</div>
+        <div>
+          <div class="history-entry-ex">${exName}</div>
+          ${dayName ? `<div class="text-xs text-muted">${dayName}</div>` : ''}
+        </div>
         <div class="history-entry-date">${new Date(l.date).toLocaleDateString()} ${new Date(l.date).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}</div>
       </div>
       <div class="history-entry-data">
@@ -2957,6 +3031,66 @@ function renderHistory() {
       ${l.notes ? `<div class="history-entry-note">💬 ${l.notes}</div>` : ''}
     </div>`;
   }).join('');
+}
+
+function renderHistorySummary(filtered, data) {
+  const container = document.getElementById('history-summary');
+  if (!container) return;
+
+  const totalSets = filtered.length;
+  const totalVolume = filtered.reduce((sum, l) => sum + ((parseFloat(l.weight) || 0) * (parseInt(l.reps) || 0)), 0);
+  const avgWeight = totalSets ? (filtered.reduce((sum, l) => sum + (parseFloat(l.weight) || 0), 0) / totalSets).toFixed(1) : '0';
+  const avgReps = totalSets ? (filtered.reduce((sum, l) => sum + (parseInt(l.reps) || 0), 0) / totalSets).toFixed(1) : '0';
+  const bestSet = filtered.reduce((best, l) => {
+    const score = (parseFloat(l.weight) || 0) * (parseInt(l.reps) || 0);
+    return score > best.score ? { entry: l, score } : best;
+  }, { entry: null, score: 0 }).entry;
+
+  const recent = filtered.slice(0, 7);
+  const maxWeight = recent.length ? Math.max(...recent.map(l => parseFloat(l.weight) || 0)) : 1;
+
+  container.innerHTML = `
+    <div class="history-summary-grid">
+      <div class="history-summary-card"><div class="label">Sets</div><div class="value">${totalSets}</div></div>
+      <div class="history-summary-card"><div class="label">Total Volume</div><div class="value">${totalVolume.toLocaleString()}</div></div>
+      <div class="history-summary-card"><div class="label">Avg Weight</div><div class="value">${avgWeight} lbs</div></div>
+      <div class="history-summary-card"><div class="label">Avg Reps</div><div class="value">${avgReps}</div></div>
+    </div>
+    <div class="history-chart">
+      ${recent.map(l => {
+        const ex = data.exercises[l.exId] || { name: 'Unknown' };
+        const weight = parseFloat(l.weight) || 0;
+        const width = maxWeight ? Math.max(10, (weight / maxWeight) * 100) : 10;
+        return `<div class="history-chart-bar"><span class="label">${ex.name}</span><span class="bar" style="width:${width}%;"></span><span class="label">${weight} lbs</span></div>`;
+      }).join('')}
+    </div>
+  `;
+}
+
+function exportHistory() {
+  const data = getData();
+  if (!currentUserId || !data.users[currentUserId]) return alert('Unlock a profile first.');
+  const logs = (data.logs[currentUserId] || []).slice().reverse();
+  if (!logs.length) return alert('No history to export.');
+
+  const payload = logs.map(l => ({
+    date: l.date,
+    exercise: data.exercises[l.exId]?.name || 'Unknown',
+    day: l.dayId ? (getUserDay(data, l.dayId)?.name || '') : '',
+    weight: l.weight,
+    reps: l.reps,
+    notes: l.notes
+  }));
+
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `hwlog-history-${new Date().toISOString().slice(0,10)}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 
 // ═══════════════════════════════════════════════
