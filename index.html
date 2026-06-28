@@ -490,7 +490,7 @@
   }
   .history-summary-grid {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
     gap: 12px;
     margin-bottom: 1rem;
   }
@@ -502,6 +502,11 @@
   }
   .history-summary-card .label { font-size: 0.72rem; color: var(--text3); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
   .history-summary-card .value { font-size: 1.1rem; font-weight: 700; }
+  .history-summary-note {
+    color: var(--text2);
+    font-size: 0.9rem;
+    margin-top: 0.75rem;
+  }
   .history-chart {
     display: grid;
     gap: 8px;
@@ -509,20 +514,35 @@
   .history-chart-bar {
     display: flex;
     align-items: center;
-    gap: 10px;
-    padding: 10px;
+    gap: 12px;
+    padding: 12px;
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 10px;
+    border-radius: 14px;
   }
   .history-chart-bar .bar {
     flex: 1;
-    height: 18px;
+    height: 16px;
     background: linear-gradient(90deg, var(--accent), var(--accent2));
     border-radius: 999px;
-    min-width: 30px;
+    min-width: 40px;
+    position: relative;
   }
-  .history-chart-bar .label { min-width: 120px; font-size: 0.85rem; color: var(--text2); }
+  .history-chart-bar .bar::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 999px;
+    opacity: 0.18;
+  }
+  .history-chart-bar .label { min-width: 130px; font-size: 0.85rem; color: var(--text2); }
+  .history-chart-bar .value { min-width: 70px; text-align: right; font-size: 0.9rem; color: var(--text); font-weight: 600; }
+  @media (max-width: 900px) {
+    .history-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+  @media (max-width: 640px) {
+    .history-summary-grid { grid-template-columns: 1fr; }
+  }
   .avg-bar {
     display: flex;
     gap: 1rem;
@@ -3059,14 +3079,16 @@ function renderHistorySummary(filtered, data) {
       <div class="history-summary-card"><div class="label">Avg Reps</div><div class="value">${avgReps}</div></div>
       <div class="history-summary-card"><div class="label">Top Set</div><div class="value">${bestSet ? `${data.exercises[bestSet.exId]?.name || 'Top'} ${bestSet.weight}×${bestSet.reps}` : '—'}</div></div>
     </div>
+    ${recent.length ? `
     <div class="history-chart">
       ${recent.map(l => {
         const ex = data.exercises[l.exId] || { name: 'Unknown' };
         const weight = parseFloat(l.weight) || 0;
         const width = maxWeight ? Math.max(10, (weight / maxWeight) * 100) : 10;
-        return `<div class="history-chart-bar"><span class="label">${ex.name}</span><span class="bar" style="width:${width}%;"></span><span class="label">${weight} lbs</span></div>`;
+        return `<div class="history-chart-bar"><span class="label">${ex.name}</span><span class="bar" style="width:${width}%;"></span><span class="value">${weight} lbs</span></div>`;
       }).join('')}
     </div>
+    ` : `<div class="history-summary-note">Log a few sets in Dashboard to unlock the workout chart below.</div>`}
   `;
 }
 
